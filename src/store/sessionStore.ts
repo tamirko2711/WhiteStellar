@@ -4,6 +4,8 @@
 // ============================================================
 
 import { create } from 'zustand'
+import { deductFromWallet } from '../lib/api/wallet'
+import { useAuthStore } from './authStore'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -63,7 +65,7 @@ interface SessionState {
   // Actions
   startSession: (params: StartSessionParams) => void
   setActive: () => void
-  endSession: () => void
+  endSession: () => Promise<void>
   tickSecond: () => void
   toggleMute: () => void
   toggleCamera: () => void
@@ -126,7 +128,24 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   setActive: () => set({ status: 'active' }),
 
-  endSession: () => set({ status: 'ended' }),
+  endSession: async () => {
+    const state = get()
+    // Deduct session cost from wallet if there was a billable charge
+    if (state.totalCost > 0 && state.clientId && state.sessionId) {
+      try {
+        const newBalance = await deductFromWallet(
+          state.clientId,
+          state.totalCost,
+          state.sessionId,
+          `Session with ${state.advisorName}`,
+        )
+        useAuthStore.getState().updateWalletBalance(newBalance)
+      } catch (err) {
+        console.error('Failed to deduct session cost from wallet:', err)
+      }
+    }
+    set({ status: 'ended' })
+  },
 
   tickSecond: () => {
     const state = get()

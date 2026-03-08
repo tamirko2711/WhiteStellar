@@ -6,7 +6,7 @@
 import { useState } from 'react'
 import {
   Eye, EyeOff, CreditCard, Building2, Wallet,
-  Mail, Phone, AlertTriangle, Check, X,
+  Mail, Phone, AlertTriangle, Check, X, Sparkles,
 } from 'lucide-react'
 
 // ─── Password strength ────────────────────────────────────────
@@ -210,6 +210,11 @@ export default function AdvisorAccount() {
   const [email, setEmail] = useState('luna.starweaver@whiteStellar.com')
   const [phone, setPhone] = useState('+1 555 0100')
   const [contactSaved, setContactSaved] = useState(false)
+
+  // AI Pre-Screen Agent
+  const [prescreenEnabled, setPrescreenEnabled] = useState(false)
+  const [prescreenRange, setPrescreenRange] = useState<1 | 2 | 3>(1)
+  const [prescreenSaved, setPrescreenSaved] = useState(false)
 
   // Danger zone
   const [showDelete, setShowDelete] = useState(false)
@@ -438,6 +443,93 @@ export default function AdvisorAccount() {
         </div>
         <SaveBtn saved={contactSaved} onClick={handleContactSave} />
       </Section>
+
+      {/* AI Pre-Screen Agent */}
+      <div style={{
+        background: '#0F1828',
+        border: '1px solid #C9A84C',
+        borderRadius: '16px', padding: '24px', marginBottom: '20px',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+          <Sparkles size={18} color="#C9A84C" />
+          <h3 style={{ color: '#C9A84C', fontWeight: 700, margin: 0, fontSize: '15px' }}>
+            AI Pre-Screen Agent
+          </h3>
+          {/* Toggle */}
+          <button
+            onClick={() => setPrescreenEnabled(v => !v)}
+            style={{
+              marginLeft: 'auto', width: '44px', height: '24px',
+              borderRadius: '12px', border: 'none', cursor: 'pointer',
+              background: prescreenEnabled ? '#C9A84C' : '#1E2D45',
+              position: 'relative', transition: 'background 0.2s', flexShrink: 0,
+            }}
+          >
+            <span style={{
+              position: 'absolute', top: '3px',
+              left: prescreenEnabled ? '23px' : '3px',
+              width: '18px', height: '18px', borderRadius: '50%',
+              background: '#F0F4FF', transition: 'left 0.2s',
+            }} />
+          </button>
+        </div>
+        <p style={{ color: '#8B9BB4', fontSize: '13px', margin: '0 0 20px', lineHeight: 1.6 }}>
+          When enabled, an AI assistant warms up new clients before you join — gathering context and evaluating intent so you can start every session already informed.
+        </p>
+
+        {prescreenEnabled && (
+          <>
+            <p style={{ color: '#F0F4FF', fontSize: '13px', fontWeight: 600, margin: '0 0 10px' }}>
+              Activate for clients joining their:
+            </p>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginBottom: '20px' }}>
+              {([
+                { value: 1, label: '1st session only' },
+                { value: 2, label: '1st & 2nd sessions' },
+                { value: 3, label: '1st, 2nd & 3rd sessions' },
+              ] as const).map(opt => {
+                const active = prescreenRange === opt.value
+                return (
+                  <button
+                    key={opt.value}
+                    onClick={() => setPrescreenRange(opt.value)}
+                    style={{
+                      flex: '1 1 140px', padding: '10px 14px', borderRadius: '10px',
+                      border: `1px solid ${active ? '#C9A84C' : '#1E2D45'}`,
+                      background: active ? 'rgba(201,168,76,0.10)' : '#1A2540',
+                      color: active ? '#C9A84C' : '#8B9BB4',
+                      fontSize: '13px', fontWeight: active ? 700 : 400,
+                      cursor: 'pointer', transition: 'all 0.15s',
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                    }}
+                  >
+                    {active && <Check size={13} color="#C9A84C" />}
+                    {opt.label}
+                  </button>
+                )
+              })}
+            </div>
+          </>
+        )}
+
+        <button
+          onClick={() => {
+            setTimeout(() => {
+              setPrescreenSaved(true)
+              setTimeout(() => setPrescreenSaved(false), 2500)
+            }, 400)
+          }}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            background: prescreenSaved ? '#22C55E' : 'linear-gradient(135deg,#C9A84C,#E8C96D)',
+            border: 'none', color: prescreenSaved ? '#fff' : '#0B0F1A',
+            fontWeight: 700, padding: '10px 24px', borderRadius: '10px',
+            cursor: 'pointer', fontSize: '14px',
+          }}
+        >
+          {prescreenSaved ? <><Check size={14} /> Saved!</> : 'Save Preferences'}
+        </button>
+      </div>
 
       {/* Danger Zone */}
       <div style={{

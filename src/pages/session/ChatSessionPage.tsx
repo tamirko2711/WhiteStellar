@@ -6,9 +6,12 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Send, Smile, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useSessionStore } from '../../store/sessionStore'
+import { useAuthStore } from '../../store/authStore'
 import SessionWrapper from '../../components/session/SessionWrapper'
 import SessionHeader from '../../components/session/SessionHeader'
 import BillingWarning from '../../components/session/BillingWarning'
+import { PrescreenChat } from '../../components/session/PrescreenChat'
+import { checkShouldPrescreen, createPrescreenSession } from '../../lib/api/prescreen'
 
 // ─── Advisor reply pool ───────────────────────────────────────
 
@@ -107,12 +110,42 @@ export default function ChatSessionPage() {
   const {
     clientId, advisorId, advisorName, advisorAvatar,
     clientName, clientAvatar, elapsedSeconds, totalCost,
-    messages, addMessage, endSession,
+    messages, addMessage, endSession, setActive,
   } = useSessionStore()
+  const { user } = useAuthStore()
 
   const [input, setInput] = useState('')
   const [advisorTyping, setAdvisorTyping] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
+
+  // Pre-screen state
+  const [isPrescreening, setIsPrescreening] = useState(false)
+  const [prescreenSessionId, setPrescreenSessionId] = useState<string | null>(null)
+  const [prescreenChecked, setPrescreenChecked] = useState(false)
+
+  // Check if prescreen should run on mount
+  useEffect(() => {
+    if (!advisorId || !user?.id || prescreenChecked) return
+    setPrescreenChecked(true)
+    checkShouldPrescreen(advisorId, user.id)
+      .then(async (should) => {
+        if (should && clientId) {
+          const prescreen = await createPrescreenSession(
+            `session-${Date.now()}`,
+            advisorId,
+            user.id,
+          )
+          setPrescreenSessionId(prescreen.id)
+          setIsPrescreening(true)
+        }
+      })
+      .catch(() => { /* prescreen unavailable — proceed normally */ })
+  }, [advisorId, user?.id, clientId, prescreenChecked])
+
+  function handlePrescreenHandoff() {
+    setIsPrescreening(false)
+    setActive() // billing ticker starts now
+  }
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const replyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -196,6 +229,24 @@ export default function ChatSessionPage() {
       End
     </button>
   )
+
+  // Show prescreen before the real session UI
+  if (isPrescreening && prescreenSessionId) {
+    return (
+      <div style={{ minHeight: '100vh', background: '#0B0F1A', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ flex: 1, maxWidth: '760px', width: '100%', margin: '0 auto', display: 'flex', flexDirection: 'column' }}>
+          <PrescreenChat
+            prescreenSessionId={prescreenSessionId}
+            advisorName={advisorName}
+            advisorAvatar={advisorAvatar}
+            advisorCategory="Psychic Reading"
+            advisorSpecializations={[]}
+            onHandoff={handlePrescreenHandoff}
+          />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <>

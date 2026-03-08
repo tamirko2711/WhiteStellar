@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Radio, DollarSign, Calendar, MessageCircle, Star, Video, Mic, CheckCircle, XCircle, X } from 'lucide-react'
+import { Radio, DollarSign, Calendar, MessageCircle, Star, Video, Mic, CheckCircle, XCircle, X, Sparkles } from 'lucide-react'
 import {
   AreaChart, Area, XAxis, Tooltip, ResponsiveContainer,
 } from 'recharts'
@@ -35,6 +35,24 @@ const TYPE_COLORS: Record<string, { bg: string; color: string }> = {
   video: { bg: 'rgba(139,92,246,0.12)',  color: '#8B5CF6' },
 }
 
+const INTENT_CONFIG = {
+  high:   { color: '#2DD4BF', bg: 'rgba(45,212,191,0.1)',   border: 'rgba(45,212,191,0.4)',  label: '⚡ High Intent'   },
+  medium: { color: '#C9A84C', bg: 'rgba(201,168,76,0.1)',   border: 'rgba(201,168,76,0.4)',  label: '✦ Medium Intent' },
+  low:    { color: '#8B9BB4', bg: 'rgba(139,155,180,0.08)', border: 'rgba(30,45,69,0.8)',    label: '○ Low Intent'    },
+} as const
+
+// Demo prescreen brief shown when test request fires
+const DEMO_PRESCREEN_BRIEF = {
+  intentScore: 'high' as const,
+  scoreReasoning: 'Client shared detailed situation about a relationship. Emotionally invested and asking specific questions.',
+  recommendedOpening: "I can feel the weight you've been carrying around this relationship — let's explore what the energy is telling us together.",
+  conversationTranscript: [
+    { role: 'user', content: "I've been in a relationship for 2 years and things have been really rocky lately. My partner seems distant and I'm not sure if we have a future together." },
+    { role: 'user', content: "I really need some guidance on whether I should stay or move on. It's been affecting my sleep and work." },
+    { role: 'user', content: "I feel like there's still something there but I'm scared of wasting more time if it's not meant to be." },
+  ],
+}
+
 // ─── Stat card ────────────────────────────────────────────────
 
 function StatCard({ icon, value, label, sublabel, iconColor }: {
@@ -63,6 +81,7 @@ export default function AdvisorOverview() {
 
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const [showIncoming, setShowIncoming] = useState(false)
+  const [showBrief, setShowBrief] = useState(false)
   const [countdown, setCountdown] = useState(120)
   const [toast, setToast] = useState({ msg: '', visible: false })
 
@@ -170,7 +189,7 @@ export default function AdvisorOverview() {
           </h2>
           {/* Dev button */}
           <button
-            onClick={() => setShowIncoming(true)}
+            onClick={() => { setShowIncoming(true); setShowBrief(true) }}
             style={{
               background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,0.3)',
               color: '#C9A84C', borderRadius: '8px', padding: '5px 12px',
@@ -208,9 +227,67 @@ export default function AdvisorOverview() {
                 <p style={{ color: '#4B5563', fontSize: '11px', margin: 0 }}>auto-decline</p>
               </div>
             </div>
+            {/* ── Pre-brief panel ── */}
+            {showBrief && (() => {
+              const cfg = INTENT_CONFIG[DEMO_PRESCREEN_BRIEF.intentScore]
+              return (
+                <div style={{
+                  background: '#0B0F1A', border: `1px solid ${cfg.border}`,
+                  borderRadius: '12px', padding: '18px', marginBottom: '16px',
+                }}>
+                  {/* Header */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
+                    <Sparkles size={15} color="#C9A84C" />
+                    <p style={{ color: '#F0F4FF', fontFamily: "'Playfair Display', serif", fontWeight: 700, fontSize: '14px', margin: 0 }}>
+                      Client Pre-Brief
+                    </p>
+                  </div>
+
+                  {/* Intent badge */}
+                  <div style={{
+                    display: 'inline-flex', alignItems: 'center',
+                    padding: '4px 12px', borderRadius: '20px', marginBottom: '10px',
+                    background: cfg.bg, border: `1px solid ${cfg.border}`,
+                  }}>
+                    <span style={{ color: cfg.color, fontWeight: 700, fontSize: '12px' }}>
+                      {cfg.label}
+                    </span>
+                  </div>
+                  <p style={{ color: '#8B9BB4', fontSize: '13px', margin: '0 0 12px', lineHeight: 1.5 }}>
+                    {DEMO_PRESCREEN_BRIEF.scoreReasoning}
+                  </p>
+
+                  {/* Transcript */}
+                  <div style={{ background: '#131929', borderRadius: '8px', padding: '10px', marginBottom: '12px', maxHeight: '120px', overflowY: 'auto' }}>
+                    <p style={{ color: '#4B5563', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 8px' }}>
+                      What they shared
+                    </p>
+                    {DEMO_PRESCREEN_BRIEF.conversationTranscript.filter(m => m.role === 'user').map((m, i) => (
+                      <p key={i} style={{ color: '#F0F4FF', fontSize: '12px', margin: '0 0 6px', lineHeight: 1.5 }}>
+                        <span style={{ color: '#C9A84C', fontWeight: 600 }}>Client: </span>{m.content}
+                      </p>
+                    ))}
+                  </div>
+
+                  {/* Suggested opening */}
+                  <div style={{
+                    background: 'rgba(201,168,76,0.07)', border: '1px solid rgba(201,168,76,0.25)',
+                    borderRadius: '8px', padding: '10px 12px',
+                  }}>
+                    <p style={{ color: '#C9A84C', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px' }}>
+                      Suggested opening
+                    </p>
+                    <p style={{ color: '#F0F4FF', fontSize: '13px', fontStyle: 'italic', margin: 0, lineHeight: 1.5 }}>
+                      "{DEMO_PRESCREEN_BRIEF.recommendedOpening}"
+                    </p>
+                  </div>
+                </div>
+              )
+            })()}
+
             <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
               <button
-                onClick={() => { setShowIncoming(false); showToast('Session accepted!') }}
+                onClick={() => { setShowIncoming(false); setShowBrief(false); showToast('Session accepted!') }}
                 style={{
                   flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
                   background: 'rgba(34,197,94,0.15)', border: '1px solid rgba(34,197,94,0.4)',

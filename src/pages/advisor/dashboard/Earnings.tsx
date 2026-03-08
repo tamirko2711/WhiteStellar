@@ -7,7 +7,9 @@ import { useState } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
-import { TrendingUp, DollarSign, Clock, Star, CreditCard, X, CheckCircle } from 'lucide-react'
+import { TrendingUp, DollarSign, Clock, Star, CreditCard, X, CheckCircle, AlertCircle } from 'lucide-react'
+import { useAuthStore } from '../../../store/authStore'
+import { requestPayout } from '../../../lib/api/payments'
 
 // ─── Dummy earnings data ──────────────────────────────────────
 
@@ -92,12 +94,23 @@ function CustomTooltip({ active, payload, label }: {
 // ─── Payout request modal ─────────────────────────────────────
 
 function PayoutModal({ available, onClose }: { available: number; onClose: () => void }) {
+  const { user } = useAuthStore()
   const [sent, setSent] = useState(false)
   const [loading, setLoading] = useState(false)
+  const [errMsg, setErrMsg] = useState('')
 
-  function request() {
+  async function request() {
+    if (!user?.id) return
     setLoading(true)
-    setTimeout(() => { setSent(true); setLoading(false) }, 1200)
+    setErrMsg('')
+    try {
+      await requestPayout(user.id, available)
+      setSent(true)
+    } catch (err) {
+      setErrMsg((err as Error).message ?? 'Payout request failed. Please try again.')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -153,6 +166,16 @@ function PayoutModal({ available, onClose }: { available: number; onClose: () =>
                 <p style={{ color: '#4B5563', fontSize: '12px', margin: 0 }}>luna@example.com</p>
               </div>
             </div>
+            {errMsg && (
+              <div style={{
+                display: 'flex', alignItems: 'flex-start', gap: '8px',
+                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.3)',
+                borderRadius: '10px', padding: '10px 14px', marginBottom: '4px',
+              }}>
+                <AlertCircle size={15} color="#EF4444" style={{ flexShrink: 0, marginTop: '1px' }} />
+                <p style={{ color: '#EF4444', fontSize: '13px', margin: 0 }}>{errMsg}</p>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: '10px' }}>
               <button onClick={onClose} style={{
                 flex: 1, padding: '10px', borderRadius: '10px',

@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Clock, Star, Twitter, Instagram, Facebook, Youtube } from 'lucide-react'
 import { ADVISORS, CATEGORIES } from '../../data/advisors'
 import AdvisorCard from '../../components/AdvisorCard'
 import CategoryPill from '../../components/CategoryPill'
 import MatchingWizard from '../../components/MatchingWizard'
+import MatchingAgent from '../../components/MatchingAgent'
 import { useModalStore } from '../../store/modalStore'
 import type { Advisor } from '../../types'
 
@@ -17,10 +18,14 @@ const STATUS_ORDER: Record<Advisor['status'], number> = { online: 0, busy: 1, of
 // ─── Component ────────────────────────────────────────────────
 
 export default function HomePage() {
+  const [searchParams] = useSearchParams()
   const [activeCategory, setActiveCategory] = useState('all')
   const [wordIndex, setWordIndex] = useState(0)
   const [wizardOpen, setWizardOpen] = useState(false)
   const { openAuthModal } = useModalStore()
+
+  // ?recommended=1 opens the matching agent immediately (e.g. from email links)
+  const openMatchingAgent = searchParams.get('recommended') === '1'
 
   function handleHowItWorksClick() {
     const section = document.getElementById('how-it-works')
@@ -59,12 +64,24 @@ export default function HomePage() {
       {/* ══════════════════════════════════════════════════════════ */}
       <section className="relative flex min-h-[88vh] items-center justify-center overflow-hidden px-6 text-center">
 
-        {/* Radial purple glow */}
+        {/* ── TEST: Spline galaxy background ── */}
+        <div className="spline-container absolute top-0 left-0 w-full h-full" style={{ opacity: 0.4 }}>
+          <iframe
+            src="https://my.spline.design/galaxy-YxBchtLLMNxuqLPeF7XcyWOm"
+            style={{ border: 'none', pointerEvents: 'none' }}
+            width="100%"
+            height="100%"
+            id="aura-spline"
+            title="Galaxy animation"
+          />
+        </div>
+
+        {/* Radial purple glow — reduced opacity so Spline shows through */}
         <div
           className="pointer-events-none absolute inset-0"
           style={{
             background:
-              'radial-gradient(ellipse 70% 60% at 50% 40%, rgba(99,60,180,0.22) 0%, rgba(45,30,90,0.12) 50%, transparent 100%)',
+              'radial-gradient(ellipse 70% 60% at 50% 40%, rgba(99,60,180,0.10) 0%, rgba(45,30,90,0.06) 50%, transparent 100%)',
           }}
         />
 
@@ -122,7 +139,7 @@ export default function HomePage() {
             </span>
           </h1>
 
-          <p className="mb-10 text-lg leading-relaxed md:text-xl" style={{ color: '#8B9BB4' }}>
+          <p className="mb-10 text-lg leading-relaxed md:text-xl" style={{ color: '#ffffff' }}>
             Connect with world-class advisors for guidance on love, life &amp; beyond
           </p>
 
@@ -752,6 +769,7 @@ export default function HomePage() {
       </footer>
 
       <MatchingWizard isOpen={wizardOpen} onClose={() => setWizardOpen(false)} />
+      <MatchingAgent initialOpen={openMatchingAgent} />
 
       {/* ── Global keyframes ── */}
       <style>{`
