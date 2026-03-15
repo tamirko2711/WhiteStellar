@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { Star, MessageSquare, X, Check } from 'lucide-react'
 import { format } from 'date-fns'
+import { useAuthStore } from '../../../store/authStore'
 
 // ─── Data ─────────────────────────────────────────────────────
 
@@ -254,9 +255,29 @@ function ReviewCard({
 // ─── Main page ────────────────────────────────────────────────
 
 export default function AdvisorReviews() {
+  const { user } = useAuthStore()
+  const isRealUser = !!(user && !user.id.startsWith('dev-'))
   const [reviews, setReviews] = useState<ReviewRow[]>(REVIEWS)
   const [filter, setFilter] = useState<FilterKey>('all')
   const [respondTo, setRespondTo] = useState<ReviewRow | null>(null)
+
+  if (isRealUser) {
+    return (
+      <div style={{ maxWidth: '860px' }}>
+        <div style={{ marginBottom: '28px' }}>
+          <h1 style={{ color: '#F0F4FF', fontWeight: 700, fontSize: '22px', margin: '0 0 4px' }}>Reviews</h1>
+          <p style={{ color: '#8B9BB4', fontSize: '14px', margin: 0 }}>Read client feedback and respond publicly to build trust.</p>
+        </div>
+        <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+          <Star size={44} style={{ color: '#1E2D45', margin: '0 auto 14px', display: 'block' }} />
+          <p style={{ color: '#8B9BB4', fontSize: '16px', fontWeight: 600, margin: '0 0 8px' }}>No reviews yet</p>
+          <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>
+            Client reviews will appear here after completed sessions.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   const filtered = reviews.filter(r => {
     if (filter === 'all') return true

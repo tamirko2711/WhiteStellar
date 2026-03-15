@@ -14,12 +14,15 @@ interface Props {
  * - Logged in but wrong userType → redirects to /
  */
 export default function ProtectedRoute({ allowedTypes, children }: Props) {
-  const { isLoggedIn, userType } = useAuthStore()
+  const { isLoggedIn, isLoading, userType } = useAuthStore()
   const { openAuthModal } = useModalStore()
 
   useEffect(() => {
-    if (!isLoggedIn) openAuthModal('login')
-  }, [isLoggedIn, openAuthModal])
+    if (!isLoading && !isLoggedIn) openAuthModal('login')
+  }, [isLoading, isLoggedIn, openAuthModal])
+
+  // Still restoring session from Supabase — don't redirect yet
+  if (isLoading) return null
 
   if (!isLoggedIn) return <Navigate to="/" replace />
   if (userType && !allowedTypes.includes(userType)) return <Navigate to="/" replace />

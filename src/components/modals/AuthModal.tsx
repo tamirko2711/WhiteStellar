@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff, X, Search, Sparkles, CheckCircle, Mail, ArrowLeft } from 'lucide-react'
 import { useModalStore, type AuthMode } from '../../store/modalStore'
 import { useAuthStore } from '../../store/authStore'
@@ -122,6 +123,7 @@ interface SharedModeProps {
 
 function LoginMode({ setMode, showToast, onClose }: SharedModeProps) {
   const { login } = useAuthStore()
+  const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
   const [showPw, setShowPw] = useState(false)
@@ -161,6 +163,10 @@ function LoginMode({ setMode, showToast, onClose }: SharedModeProps) {
       await login(email, pw)
       onClose()
       showToast('Welcome back! ✨')
+      const { userType } = useAuthStore.getState()
+      if (userType === 'client') navigate('/dashboard')
+      else if (userType === 'advisor') navigate('/advisor/dashboard')
+      else if (userType === 'superadmin') navigate('/admin')
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Sign in failed. Please try again.'
       setErrors(prev => ({ ...prev, form: msg }))
@@ -279,6 +285,7 @@ interface RegisterModeProps extends SharedModeProps {
 
 function RegisterMode({ setMode, showToast, onClose, setCapturedEmail, preSelectedUserType }: RegisterModeProps) {
   const { register } = useAuthStore()
+  const navigate = useNavigate()
   const [step, setStep] = useState<RegStep>(1)
   const [accountType, setAccountType] = useState<AccountType | null>(preSelectedUserType ?? null)
 
@@ -338,7 +345,8 @@ function RegisterMode({ setMode, showToast, onClose, setCapturedEmail, preSelect
       await register(email, pw, name, accountType)
       if (accountType === 'advisor') {
         onClose()
-        showToast("Application submitted! We'll review and get back to you within 48 hours.")
+        showToast('Welcome! Your advisor dashboard is ready.')
+        navigate('/advisor/dashboard')
       } else {
         setCapturedEmail(email)
         setMode('verify-email')

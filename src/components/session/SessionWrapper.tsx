@@ -6,7 +6,6 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSessionStore } from '../../store/sessionStore'
-import { useAuthStore } from '../../store/authStore'
 
 interface Props {
   children: React.ReactNode
@@ -14,8 +13,7 @@ interface Props {
 
 export default function SessionWrapper({ children }: Props) {
   const navigate = useNavigate()
-  const { user, updateWalletBalance } = useAuthStore()
-  const { status, tickSecond, totalCost } = useSessionStore()
+  const { status, tickSecond } = useSessionStore()
 
   // If no session, bail to home
   useEffect(() => {
@@ -29,13 +27,10 @@ export default function SessionWrapper({ children }: Props) {
     return () => clearInterval(interval)
   }, [status, tickSecond])
 
-  // When session ends — update wallet, navigate to summary
+  // When session ends — navigate to summary
+  // (wallet balance already updated by endSession() in sessionStore)
   useEffect(() => {
     if (status !== 'ended') return
-    if (user) {
-      const newBalance = Math.max(0, (user.walletBalance ?? 0) - totalCost)
-      updateWalletBalance(newBalance)
-    }
     navigate('/session/end', { replace: true })
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status])

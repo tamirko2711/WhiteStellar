@@ -18,7 +18,6 @@ export const getWalletBalance = async (clientId: string): Promise<number> => {
 export const deductFromWallet = async (
   clientId: string,
   amount: number,
-  sessionId: string,
   description: string,
 ): Promise<number> => {
   const { data: profile } = await supabase
@@ -37,7 +36,6 @@ export const deductFromWallet = async (
 
   await supabase.from('transactions').insert({
     client_id: clientId,
-    session_id: sessionId,
     type: 'session_charge',
     amount: -amount,
     balance_before: balanceBefore,

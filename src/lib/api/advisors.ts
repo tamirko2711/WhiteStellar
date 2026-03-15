@@ -18,7 +18,7 @@ export const getAdvisors = async (filters?: {
       *,
       advisor_categories(category_id, categories(slug, title)),
       advisor_specializations(specialization_id, specializations(title)),
-      advisor_skills(skill_id, skills(title))
+      advisor_skills(skill_id, skills_and_methods(title))
     `)
     .eq('account_status', 'active')
 
@@ -42,7 +42,8 @@ export const getAdvisorById = async (id: number) => {
       *,
       advisor_categories(category_id, categories(*)),
       advisor_specializations(specialization_id, specializations(*)),
-      advisor_skills(skill_id, skills(*))
+      advisor_skills(skill_id, skills_and_methods(*)),
+      advisor_languages(language_id, languages(*))
     `)
     .eq('id', id)
     .single()

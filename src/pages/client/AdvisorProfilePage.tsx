@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import {
@@ -6,11 +6,13 @@ import {
   Wallet, CheckCircle, AlertTriangle, ChevronDown,
   ChevronUp, ArrowLeft, X,
 } from 'lucide-react'
-import { getAdvisorById, ADVISORS } from '../../data/advisors'
+import { ADVISORS } from '../../data/advisors'
+import { getAdvisorById as fetchAdvisorFromDB, getAdvisorReviews } from '../../lib/api/advisors'
 import { useAuthStore } from '../../store/authStore'
+import { supabase } from '../../lib/supabase'
 import Toast from '../../components/Toast'
 import StartSessionModal from '../../components/modals/StartSessionModal'
-import type { SessionType, Advisor } from '../../types'
+import type { SessionType, Advisor, Review } from '../../types'
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -591,19 +593,148 @@ function ConnectPanel({
 
 // ─── Main page ────────────────────────────────────────────────
 
+// ─── Map Supabase row → Advisor type ─────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapAdvisorRow(row: any): Advisor {
+  const sessionTypes: Advisor['sessionTypes'] = []
+  if (row.chat_price)  sessionTypes.push('chat')
+  if (row.audio_price) sessionTypes.push('audio')
+  if (row.video_price) sessionTypes.push('video')
+
+  return {
+    id: row.id,
+    userId: 0,
+    fullName: row.full_name ?? 'Advisor',
+    shortBio: row.short_bio ?? '',
+    longBio: row.long_bio ?? '',
+    avatar: row.avatar
+      ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(row.full_name ?? 'A')}&background=1E2D45&color=C9A84C`,
+    backgroundImage: row.background_image
+      ?? 'https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=800',
+    status: row.status ?? 'offline',
+    accountStatus: row.account_status ?? 'active',
+    isTopAdvisor: row.is_top_advisor ?? false,
+    isNew: !row.is_top_advisor,
+    languages: (row.advisor_languages ?? []).map((jl: any) => ({
+      id: jl.language_id,
+      name: jl.languages?.name ?? '',
+      code: jl.languages?.code ?? '',
+    })),
+    categories: (row.advisor_categories ?? []).map((jc: any) => ({
+      id: jc.category_id,
+      slug: jc.categories?.slug ?? '',
+      title: jc.categories?.title ?? '',
+      icon: 'Star',
+      description: '',
+      advisorCount: 0,
+    })),
+    specializations: (row.advisor_specializations ?? []).map((js: any) => ({
+      id: js.specialization_id,
+      title: js.specializations?.title ?? '',
+      categoryId: 0,
+    })),
+    skillsAndMethods: (row.advisor_skills ?? []).map((sk: any) => ({
+      id: sk.skill_id,
+      title: sk.skills_and_methods?.title ?? '',
+    })),
+    sessionTypes,
+    pricing: {
+      chat: row.chat_price ?? null,
+      audio: row.audio_price ?? null,
+      video: row.video_price ?? null,
+    },
+    rating: row.rating ?? 5.0,
+    reviewCount: row.review_count ?? 0,
+    totalSessions: row.total_sessions ?? 0,
+    yearsActive: row.years_active ?? 0,
+    responseTime: row.response_time ?? '—',
+    withdrawalMethod: 'paypal',
+    joinedAt: row.created_at ?? new Date().toISOString(),
+    reviews: [],
+  }
+}
+
 export default function AdvisorProfilePage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const walletBalance = useAuthStore(s => s.user?.walletBalance ?? 45.00)
+  const user = useAuthStore(s => s.user)
 
-  const advisor = id ? (getAdvisorById(Number(id)) ?? null) : ADVISORS[0]
+  const [advisor, setAdvisor] = useState<Advisor | null>(null)
+  const [loadingAdvisor, setLoadingAdvisor] = useState(true)
+
+  // Fetch from Supabase first; fall back to mock data for dev IDs
+  useEffect(() => {
+    if (!id) { setAdvisor(ADVISORS[0]); setLoadingAdvisor(false); return }
+    const numId = Number(id)
+    fetchAdvisorFromDB(numId)
+      .then(row => { setAdvisor(mapAdvisorRow(row)) })
+      .catch(() => {
+        // Fall back to mock data (used in dev mode)
+        const mock = ADVISORS.find(a => a.id === numId) ?? null
+        setAdvisor(mock)
+      })
+      .finally(() => setLoadingAdvisor(false))
+  }, [id])
+
+  // Fetch real reviews from Supabase once advisor is loaded
+  useEffect(() => {
+    const numId = Number(id)
+    if (!advisor?.id || isNaN(numId)) return
+    getAdvisorReviews(numId)
+      .then(rows => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const mapped: Review[] = rows.map((r: any) => ({
+          id: r.id,
+          advisorId: r.advisor_id,
+          clientId: 0,
+          clientName: r.client_name ?? r.profiles?.full_name ?? 'Client',
+          clientAvatar: r.client_avatar ?? r.profiles?.avatar_url
+            ?? `https://i.pravatar.cc/150?img=${r.id % 70}`,
+          rating: r.rating,
+          comment: r.comment ?? '',
+          sessionType: r.session_type ?? 'chat',
+          createdAt: r.created_at,
+          isApproved: r.is_approved ?? true,
+        }))
+        setAdvisor(prev => prev ? { ...prev, reviews: mapped } : prev)
+      })
+      .catch(console.error)
+  }, [advisor?.id, id])
 
   // Connect panel state
-  const [selectedType, setSelectedType] = useState<SessionType>(
-    () => (advisor?.sessionTypes[0] ?? 'chat')
-  )
+  const [selectedType, setSelectedType] = useState<SessionType>('chat')
   const [selectedMinutes, setSelectedMinutes] = useState(10)
   const [saved, setSaved] = useState(false)
+
+  // Sync selectedType once advisor loads
+  useEffect(() => {
+    if (advisor?.sessionTypes.length) setSelectedType(advisor.sessionTypes[0])
+  }, [advisor])
+
+  useEffect(() => {
+    if (!user?.id || !id) return
+    supabase
+      .from('saved_advisors')
+      .select('advisor_id')
+      .eq('client_id', user.id)
+      .eq('advisor_id', Number(id))
+      .maybeSingle()
+      .then(({ data }) => setSaved(!!data))
+  }, [user?.id, id])
+
+  async function handleToggleSave(newSaved: boolean) {
+    setSaved(newSaved)
+    if (!user?.id) return
+    if (newSaved) {
+      await supabase.from('saved_advisors').insert({ client_id: user.id, advisor_id: Number(id) })
+    } else {
+      await supabase.from('saved_advisors').delete()
+        .eq('client_id', user.id).eq('advisor_id', Number(id))
+    }
+  }
+
   const [notifyEnabled, setNotifyEnabled] = useState(false)
   const [toastVisible, setToastVisible] = useState(false)
   const [mobileConnectOpen, setMobileConnectOpen] = useState(false)
@@ -614,6 +745,15 @@ export default function AdvisorProfilePage() {
     setToastVisible(true)
     setTimeout(() => setToastVisible(false), 2000)
   }, [])
+
+  // Loading state
+  if (loadingAdvisor) {
+    return (
+      <div className="flex min-h-[70vh] items-center justify-center" style={{ background: '#0B0F1A' }}>
+        <p style={{ color: '#8B9BB4', fontSize: '14px' }}>Loading advisor profile…</p>
+      </div>
+    )
+  }
 
   // "Advisor not found" state
   if (id && !advisor) {
@@ -639,7 +779,7 @@ export default function AdvisorProfilePage() {
   const connectProps: ConnectPanelProps = {
     advisor, selectedType, setSelectedType,
     selectedMinutes, setSelectedMinutes,
-    saved, setSaved, notifyEnabled, setNotifyEnabled,
+    saved, setSaved: handleToggleSave, notifyEnabled, setNotifyEnabled,
     onShare: handleShare, walletBalance,
     onStartSession: () => setSessionModalOpen(true),
   }

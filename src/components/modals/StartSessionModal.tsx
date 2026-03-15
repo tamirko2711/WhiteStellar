@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import { MessageCircle, Mic, Video, X, Wallet, Clock } from 'lucide-react'
 import { useAuthStore } from '../../store/authStore'
 import { useSessionStore } from '../../store/sessionStore'
+import { createSession } from '../../lib/api/sessions'
 
 // ─── Props ────────────────────────────────────────────────────
 
@@ -31,10 +32,13 @@ export default function StartSessionModal({
   const navigate = useNavigate()
 
   const [agreed, setAgreed] = useState(false)
+  const [starting, setStarting] = useState(false)
+  const [startError, setStartError] = useState('')
 
   const walletBalance = user?.walletBalance ?? 0
   const hasEnoughBalance = walletBalance >= pricePerMinute
   const isNewClient = true // demo: always show free minutes
+  const isRealUser = user && !user.id.startsWith('dev-')
 
   const freeMinutes = isNewClient ? 3 : 0
   const estimatedPaidMinutes = Math.floor(walletBalance / pricePerMinute)
@@ -44,22 +48,43 @@ export default function StartSessionModal({
   const TYPE_LABEL = { chat: 'Chat', audio: 'Audio', video: 'Video' }
   const TypeIcon = TYPE_ICON[sessionType]
 
-  function handleStart() {
-    if (!user || !agreed || !hasEnoughBalance) return
-    startSession({
-      sessionType,
-      clientId: user.id,
-      clientName: user.fullName,
-      clientAvatar: user.avatar ?? 'https://i.pravatar.cc/150?img=5',
-      advisorId,
-      advisorName,
-      advisorAvatar,
-      pricePerMinute,
-      walletBalance,
-      isNewClient,
-    })
-    onClose()
-    navigate('/session/connecting')
+  async function handleStart() {
+    if (!user || !agreed || !hasEnoughBalance || starting) return
+    setStartError('')
+    setStarting(true)
+    try {
+      let supabaseSessionId: number | null = null
+      if (isRealUser) {
+        const sessionData = await createSession({
+          advisorId,
+          advisorName,
+          clientId: user.id,
+          clientName: user.fullName,
+          sessionType,
+          pricePerMinute,
+        })
+        supabaseSessionId = sessionData.id
+      }
+      startSession({
+        sessionType,
+        clientId: user.id,
+        clientName: user.fullName,
+        clientAvatar: user.avatar ?? 'https://i.pravatar.cc/150?img=5',
+        advisorId,
+        advisorName,
+        advisorAvatar,
+        pricePerMinute,
+        walletBalance,
+        isNewClient,
+        supabaseSessionId,
+      })
+      onClose()
+      navigate('/session/connecting')
+    } catch (err) {
+      console.error('Failed to start session:', err)
+      setStartError('Could not start session. Please try again.')
+      setStarting(false)
+    }
   }
 
   return (
@@ -172,6 +197,16 @@ export default function StartSessionModal({
           </div>
         </div>
 
+        {/* Start error */}
+        {startError && (
+          <div style={{
+            background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+            borderRadius: '10px', padding: '10px 14px', marginBottom: '14px',
+          }}>
+            <span style={{ color: '#EF4444', fontSize: '13px' }}>{startError}</span>
+          </div>
+        )}
+
         {/* Insufficient balance warning */}
         {!hasEnoughBalance && (
           <div style={{
@@ -211,20 +246,20 @@ export default function StartSessionModal({
         {/* CTA */}
         <button
           onClick={handleStart}
-          disabled={!agreed || !hasEnoughBalance}
+          disabled={!agreed || !hasEnoughBalance || starting}
           style={{
             width: '100%', padding: '14px',
-            background: agreed && hasEnoughBalance
+            background: agreed && hasEnoughBalance && !starting
               ? 'linear-gradient(135deg,#C9A84C,#E8C96D)'
               : '#1A2540',
             border: 'none', borderRadius: '12px',
-            color: agreed && hasEnoughBalance ? '#0B0F1A' : '#4B5563',
+            color: agreed && hasEnoughBalance && !starting ? '#0B0F1A' : '#4B5563',
             fontWeight: 700, fontSize: '15px',
-            cursor: agreed && hasEnoughBalance ? 'pointer' : 'default',
+            cursor: agreed && hasEnoughBalance && !starting ? 'pointer' : 'default',
             marginBottom: '10px', transition: 'all 0.2s',
           }}
         >
-          Start {TYPE_LABEL[sessionType]} Session
+          {starting ? 'Starting…' : `Start ${TYPE_LABEL[sessionType]} Session`}
         </button>
 
         <button

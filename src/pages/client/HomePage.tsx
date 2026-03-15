@@ -7,7 +7,66 @@ import CategoryPill from '../../components/CategoryPill'
 import MatchingWizard from '../../components/MatchingWizard'
 import MatchingAgent from '../../components/MatchingAgent'
 import { useModalStore } from '../../store/modalStore'
+import { getAdvisors } from '../../lib/api/advisors'
 import type { Advisor } from '../../types'
+
+// ─── Map Supabase advisor row → Advisor type ──────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapRow(row: any): Advisor {
+  const sessionTypes: Advisor['sessionTypes'] = []
+  if (row.chat_price)  sessionTypes.push('chat')
+  if (row.audio_price) sessionTypes.push('audio')
+  if (row.video_price) sessionTypes.push('video')
+
+  return {
+    id: row.id,
+    userId: 0,
+    fullName: row.full_name ?? 'Advisor',
+    shortBio: row.short_bio ?? '',
+    longBio: row.long_bio ?? '',
+    avatar: row.avatar
+      ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(row.full_name ?? 'A')}&background=1E2D45&color=C9A84C`,
+    backgroundImage: row.background_image
+      ?? 'https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=800',
+    status: row.status ?? 'offline',
+    accountStatus: row.account_status ?? 'active',
+    isTopAdvisor: row.is_top_advisor ?? false,
+    isNew: !row.is_top_advisor,
+    languages: [],
+    categories: (row.advisor_categories ?? []).map((jc: any) => ({
+      id: jc.category_id,
+      slug: jc.categories?.slug ?? '',
+      title: jc.categories?.title ?? '',
+      icon: 'Star',
+      description: '',
+      advisorCount: 0,
+    })),
+    specializations: (row.advisor_specializations ?? []).map((js: any) => ({
+      id: js.specialization_id,
+      title: js.specializations?.title ?? '',
+      categoryId: 0,
+    })),
+    skillsAndMethods: (row.advisor_skills ?? []).map((sk: any) => ({
+      id: sk.skill_id,
+      title: sk.skills_and_methods?.title ?? '',
+    })),
+    sessionTypes,
+    pricing: {
+      chat: row.chat_price ?? null,
+      audio: row.audio_price ?? null,
+      video: row.video_price ?? null,
+    },
+    rating: row.rating ?? 5.0,
+    reviewCount: row.review_count ?? 0,
+    totalSessions: row.total_sessions ?? 0,
+    yearsActive: row.years_active ?? 0,
+    responseTime: row.response_time ?? '—',
+    withdrawalMethod: 'paypal',
+    joinedAt: row.created_at ?? new Date().toISOString(),
+    reviews: [],
+  }
+}
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -22,6 +81,7 @@ export default function HomePage() {
   const [activeCategory, setActiveCategory] = useState('all')
   const [wordIndex, setWordIndex] = useState(0)
   const [wizardOpen, setWizardOpen] = useState(false)
+  const [liveAdvisors, setLiveAdvisors] = useState<Advisor[]>([])
   const { openAuthModal } = useModalStore()
 
   // ?recommended=1 opens the matching agent immediately (e.g. from email links)
@@ -40,20 +100,33 @@ export default function HomePage() {
     return () => clearInterval(id)
   }, [])
 
+  // Fetch real advisors from Supabase; fall back to mock if none returned
+  useEffect(() => {
+    getAdvisors({ sortBy: 'rating' })
+      .then(rows => {
+        console.log('[WhiteStellar] getAdvisors returned', rows.length, 'rows:', rows)
+        if (rows.length > 0) setLiveAdvisors(rows.map(mapRow))
+      })
+      .catch(err => { console.error('[WhiteStellar] getAdvisors error:', err) })
+  }, [])
+
+  // Use real advisors when available, otherwise show mock data
+  const advisorList = liveAdvisors.length > 0 ? liveAdvisors : ADVISORS
+
   const filteredAdvisors = useMemo(() => {
     const list =
       activeCategory === 'all'
-        ? ADVISORS
-        : ADVISORS.filter(a => a.categories.some(c => c.slug === activeCategory))
+        ? advisorList
+        : advisorList.filter(a => a.categories.some(c => c.slug === activeCategory))
     return [...list].sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status])
-  }, [activeCategory])
+  }, [activeCategory, advisorList])
 
   const topAdvisors = useMemo(
     () =>
-      ADVISORS.filter(a => a.isTopAdvisor).sort(
+      advisorList.filter(a => a.isTopAdvisor).sort(
         (a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
       ),
-    []
+    [advisorList]
   )
 
   return (

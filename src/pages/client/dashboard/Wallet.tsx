@@ -1,16 +1,11 @@
 import { useState, useEffect } from 'react'
 import {
-  Elements,
-  PaymentElement,
-  useStripe,
-  useElements,
-} from '@stripe/react-stripe-js'
-import { ArrowUpCircle, ArrowDownCircle, RefreshCw, Download, Lock, CheckCircle, XCircle, ChevronLeft } from 'lucide-react'
+  ArrowUpCircle, ArrowDownCircle, RefreshCw, Download,
+  Lock, CheckCircle, XCircle, ChevronLeft, CreditCard,
+} from 'lucide-react'
 import { format } from 'date-fns'
 import { useAuthStore } from '../../../store/authStore'
-import { getTransactions } from '../../../lib/api/wallet'
-import { createPaymentIntent } from '../../../lib/api/payments'
-import { stripePromise } from '../../../lib/stripe'
+import { getTransactions, addToWallet } from '../../../lib/api/wallet'
 import Toast from '../../../components/Toast'
 
 const PRESET_AMOUNTS = [10, 25, 50, 100, 200]
@@ -42,61 +37,76 @@ function txIcon(type: string) {
   return                         <ArrowDownCircle size={18} style={{ color: '#EF4444' }} />
 }
 
-// ─── Checkout form (inside Stripe Elements context) ───────────
+function formatCardNumber(val: string) {
+  return val.replace(/\D/g, '').slice(0, 16).replace(/(\d{4})(?=\d)/g, '$1 ')
+}
 
-function CheckoutForm({
+function formatExpiry(val: string) {
+  const digits = val.replace(/\D/g, '').slice(0, 4)
+  if (digits.length >= 3) return digits.slice(0, 2) + '/' + digits.slice(2)
+  return digits
+}
+
+// ─── Mock checkout form ────────────────────────────────────────
+// TODO: Replace with real Stripe <Elements> + <CheckoutForm> when
+//       VITE_STRIPE_PUBLISHABLE_KEY and the create-payment-intent
+//       Edge Function are ready for production.
+
+function MockCheckoutForm({
   amount,
   onSuccess,
-  onError,
   onBack,
 }: {
   amount: number
   onSuccess: () => void
-  onError: (msg: string) => void
   onBack: () => void
 }) {
-  const stripe = useStripe()
-  const elements = useElements()
-  const [loading, setLoading] = useState(false)
+  const [cardNumber, setCardNumber] = useState('')
+  const [expiry, setExpiry]         = useState('')
+  const [cvv, setCvv]               = useState('')
+  const [name, setName]             = useState('')
+  const [loading, setLoading]       = useState(false)
 
-  async function handleSubmit(e: React.FormEvent) {
+  const inputStyle: React.CSSProperties = {
+    width: '100%', background: '#131929', border: '1px solid #1E2D45',
+    borderRadius: '10px', padding: '12px 14px',
+    color: '#F0F4FF', fontSize: '14px', outline: 'none',
+    boxSizing: 'border-box',
+  }
+
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault()
-    if (!stripe || !elements) return
     setLoading(true)
-
-    const { error, paymentIntent } = await stripe.confirmPayment({
-      elements,
-      confirmParams: {
-        return_url: `${window.location.origin}/dashboard/wallet`,
-      },
-      redirect: 'if_required',
-    })
-
-    if (error) {
-      onError(error.message ?? 'Payment failed. Please try again.')
-    } else if (paymentIntent?.status === 'succeeded') {
-      onSuccess()
-    } else {
-      onError('Unexpected payment status. Please contact support.')
-    }
-
+    // Simulate network + processing delay
+    await new Promise(resolve => setTimeout(resolve, 1800))
     setLoading(false)
+    onSuccess()
   }
 
   return (
-    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-      {/* Back link */}
-      <button
-        type="button"
-        onClick={onBack}
-        style={{
-          display: 'inline-flex', alignItems: 'center', gap: '6px',
-          background: 'none', border: 'none', color: '#8B9BB4',
-          fontSize: '13px', cursor: 'pointer', padding: 0, width: 'fit-content',
-        }}
-      >
-        <ChevronLeft size={16} /> Change amount
-      </button>
+    <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+      {/* Back + TEST MODE badge */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <button
+          type="button"
+          onClick={onBack}
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: '6px',
+            background: 'none', border: 'none', color: '#8B9BB4',
+            fontSize: '13px', cursor: 'pointer', padding: 0,
+          }}
+        >
+          <ChevronLeft size={16} /> Change amount
+        </button>
+        <span style={{
+          background: 'rgba(245,158,11,0.15)', color: '#F59E0B',
+          border: '1px solid rgba(245,158,11,0.3)',
+          borderRadius: '20px', padding: '2px 10px', fontSize: '11px', fontWeight: 700,
+        }}>
+          TEST MODE
+        </span>
+      </div>
 
       {/* Amount recap */}
       <div style={{
@@ -111,38 +121,111 @@ function CheckoutForm({
         </p>
       </div>
 
-      {/* Stripe PaymentElement */}
-      <div style={{ padding: '4px 0' }}>
-        <PaymentElement
-          options={{
-            layout: 'tabs',
-          }}
+      {/* Card number */}
+      <div>
+        <p style={{ fontSize: '12px', color: '#8B9BB4', margin: '0 0 8px' }}>Card Number</p>
+        <div style={{ position: 'relative' }}>
+          <input
+            type="text"
+            placeholder="1234 5678 9012 3456"
+            value={cardNumber}
+            onChange={e => setCardNumber(formatCardNumber(e.target.value))}
+            maxLength={19}
+            required
+            style={inputStyle}
+          />
+          <CreditCard
+            size={16}
+            style={{
+              position: 'absolute', right: '12px', top: '50%',
+              transform: 'translateY(-50%)', color: '#4B5563',
+            }}
+          />
+        </div>
+        <p style={{ fontSize: '11px', color: '#4B5563', margin: '4px 0 0' }}>
+          Any number works in test mode
+        </p>
+      </div>
+
+      {/* Expiry + CVV */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+        <div>
+          <p style={{ fontSize: '12px', color: '#8B9BB4', margin: '0 0 8px' }}>Expiry</p>
+          <input
+            type="text"
+            placeholder="MM/YY"
+            value={expiry}
+            onChange={e => setExpiry(formatExpiry(e.target.value))}
+            maxLength={5}
+            required
+            style={inputStyle}
+          />
+        </div>
+        <div>
+          <p style={{ fontSize: '12px', color: '#8B9BB4', margin: '0 0 8px' }}>CVV</p>
+          <input
+            type="text"
+            placeholder="123"
+            value={cvv}
+            onChange={e => setCvv(e.target.value.replace(/\D/g, '').slice(0, 4))}
+            maxLength={4}
+            required
+            style={inputStyle}
+          />
+        </div>
+      </div>
+
+      {/* Cardholder name */}
+      <div>
+        <p style={{ fontSize: '12px', color: '#8B9BB4', margin: '0 0 8px' }}>Cardholder Name</p>
+        <input
+          type="text"
+          placeholder="Full name on card"
+          value={name}
+          onChange={e => setName(e.target.value)}
+          required
+          style={inputStyle}
         />
       </div>
 
       {/* Submit */}
       <button
         type="submit"
-        disabled={!stripe || loading}
+        disabled={loading}
         style={{
           width: '100%', height: '50px', borderRadius: '12px', border: 'none',
-          background: !stripe || loading ? '#1E2D45' : '#C9A84C',
-          color: !stripe || loading ? '#4B5563' : '#0B0F1A',
+          background: loading ? '#1E2D45' : '#C9A84C',
+          color: loading ? '#4B5563' : '#0B0F1A',
           fontSize: '15px', fontWeight: 700,
-          cursor: !stripe || loading ? 'not-allowed' : 'pointer',
+          cursor: loading ? 'not-allowed' : 'pointer',
           transition: 'all 0.2s',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px',
         }}
       >
-        {loading ? 'Processing…' : `Pay $${amount.toFixed(2)}`}
+        {loading
+          ? <>
+              <span style={{
+                width: '16px', height: '16px', border: '2px solid #4B5563',
+                borderTopColor: '#8B9BB4', borderRadius: '50%',
+                animation: 'spin 0.7s linear infinite', display: 'inline-block',
+              }} />
+              Processing…
+            </>
+          : `Pay $${amount.toFixed(2)}`
+        }
       </button>
 
       {/* Security note */}
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
         <Lock size={13} style={{ color: '#4B5563', flexShrink: 0, marginTop: '1px' }} />
         <p style={{ color: '#4B5563', fontSize: '12px', margin: 0, lineHeight: 1.5 }}>
-          Payments are secured by Stripe. WhiteStellar never stores your card details.
+          Test mode — no real charges. Stripe will be activated before launch.
         </p>
       </div>
+
+      <style>{`
+        @keyframes spin { to { transform: rotate(360deg); } }
+      `}</style>
     </form>
   )
 }
@@ -153,18 +236,16 @@ export default function Wallet() {
   const { user, updateWalletBalance } = useAuthStore()
 
   // Top-up flow state
-  const [step, setStep] = useState<WalletStep>('amount')
+  const [step, setStep]                 = useState<WalletStep>('amount')
   const [selectedPreset, setSelectedPreset] = useState<number | null>(50)
-  const [customInput, setCustomInput] = useState('')
-  const [clientSecret, setClientSecret] = useState<string | null>(null)
+  const [customInput, setCustomInput]   = useState('')
   const [intentAmount, setIntentAmount] = useState(0)
-  const [errorMsg, setErrorMsg] = useState('')
-  const [intentLoading, setIntentLoading] = useState(false)
+  const [errorMsg, setErrorMsg]         = useState('')
 
   // Transaction history
-  const [txFilter, setTxFilter] = useState<TxFilter>('all')
+  const [txFilter, setTxFilter]         = useState<TxFilter>('all')
   const [transactions, setTransactions] = useState<Transaction[]>([])
-  const [toast, setToast] = useState({ msg: '', visible: false })
+  const [toast, setToast]               = useState({ msg: '', visible: false })
 
   useEffect(() => {
     if (!user?.id) return
@@ -180,45 +261,30 @@ export default function Wallet() {
 
   const effectiveAmount = customInput ? parseFloat(customInput) || 0 : selectedPreset ?? 0
 
-  async function handleContinueToPayment() {
+  function handleContinueToPayment() {
     if (effectiveAmount <= 0 || !user?.id) return
-    setIntentLoading(true)
-    try {
-      const { clientSecret: cs } = await createPaymentIntent(effectiveAmount, user.id)
-      setClientSecret(cs)
-      setIntentAmount(effectiveAmount)
-      setStep('card')
-    } catch (err) {
-      showToast('Failed to initialize payment. Please try again.')
-      console.error(err)
-    } finally {
-      setIntentLoading(false)
-    }
+    setIntentAmount(effectiveAmount)
+    setStep('card')
   }
 
   async function handlePaymentSuccess() {
     setStep('success')
-    // Optimistically refresh balance and transactions
     try {
       if (user?.id) {
+        // Write the deposit to Supabase — updates wallet_balance + inserts transaction row
+        const newBalance = await addToWallet(user.id, intentAmount, 'Wallet top-up')
+        updateWalletBalance(newBalance)
         const txs = await getTransactions(user.id)
         setTransactions(txs)
-        // Webhook may not have fired yet — update balance optimistically
-        updateWalletBalance((user.walletBalance ?? 0) + intentAmount)
       }
-    } catch {
-      // Balance will be refreshed on next page load
+    } catch (err) {
+      console.error('Failed to update wallet after mock payment:', err)
+      showToast('Balance will refresh on next load.')
     }
-  }
-
-  function handlePaymentError(msg: string) {
-    setErrorMsg(msg)
-    setStep('error')
   }
 
   function resetTopUp() {
     setStep('amount')
-    setClientSecret(null)
     setSelectedPreset(50)
     setCustomInput('')
     setIntentAmount(0)
@@ -228,24 +294,6 @@ export default function Wallet() {
   const filteredTx = transactions.filter(t =>
     txFilter === 'all' ? true : t.type === txFilter
   )
-
-  // ── Stripe Elements appearance ────────────────────────────────
-  const elementsOptions = clientSecret
-    ? {
-        clientSecret,
-        appearance: {
-          theme: 'night' as const,
-          variables: {
-            colorPrimary: '#C9A84C',
-            colorBackground: '#131929',
-            colorText: '#F0F4FF',
-            colorDanger: '#EF4444',
-            fontFamily: 'Inter, system-ui, sans-serif',
-            borderRadius: '10px',
-          },
-        },
-      }
-    : undefined
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
@@ -307,10 +355,10 @@ export default function Wallet() {
               Payment Successful!
             </h2>
             <p style={{ color: '#8B9BB4', fontSize: '14px', margin: '0 0 6px' }}>
-              <strong style={{ color: '#C9A84C' }}>${intentAmount.toFixed(2)}</strong> is being added to your wallet.
+              <strong style={{ color: '#C9A84C' }}>${intentAmount.toFixed(2)}</strong> has been added to your wallet.
             </p>
             <p style={{ color: '#4B5563', fontSize: '13px', margin: '0 0 28px' }}>
-              Your balance will update within a few seconds.
+              Your balance has been updated.
             </p>
             <button
               onClick={resetTopUp}
@@ -358,20 +406,17 @@ export default function Wallet() {
           </div>
         )}
 
-        {/* Step: Card (Stripe Elements) */}
-        {step === 'card' && clientSecret && elementsOptions && (
+        {/* Step: Card (mock checkout) */}
+        {step === 'card' && (
           <div>
             <h2 style={{ fontFamily: "'Playfair Display', serif", fontSize: '18px', fontWeight: 700, color: '#F0F4FF', margin: '0 0 24px' }}>
               Payment Details
             </h2>
-            <Elements stripe={stripePromise} options={elementsOptions}>
-              <CheckoutForm
-                amount={intentAmount}
-                onSuccess={handlePaymentSuccess}
-                onError={handlePaymentError}
-                onBack={resetTopUp}
-              />
-            </Elements>
+            <MockCheckoutForm
+              amount={intentAmount}
+              onSuccess={handlePaymentSuccess}
+              onBack={resetTopUp}
+            />
           </div>
         )}
 
@@ -425,19 +470,17 @@ export default function Wallet() {
             {/* CTA */}
             <button
               onClick={handleContinueToPayment}
-              disabled={effectiveAmount <= 0 || intentLoading}
+              disabled={effectiveAmount <= 0}
               style={{
                 width: '100%', height: '50px', borderRadius: '12px', border: 'none',
-                background: effectiveAmount > 0 && !intentLoading ? '#C9A84C' : '#1E2D45',
-                color: effectiveAmount > 0 && !intentLoading ? '#0B0F1A' : '#4B5563',
+                background: effectiveAmount > 0 ? '#C9A84C' : '#1E2D45',
+                color: effectiveAmount > 0 ? '#0B0F1A' : '#4B5563',
                 fontSize: '15px', fontWeight: 700,
-                cursor: effectiveAmount > 0 && !intentLoading ? 'pointer' : 'not-allowed',
+                cursor: effectiveAmount > 0 ? 'pointer' : 'not-allowed',
                 marginBottom: '16px', transition: 'all 0.2s',
               }}
             >
-              {intentLoading
-                ? 'Preparing payment…'
-                : `Continue ${effectiveAmount > 0 ? `— $${effectiveAmount.toFixed(2)}` : ''}`}
+              {`Continue ${effectiveAmount > 0 ? `— $${effectiveAmount.toFixed(2)}` : ''}`}
             </button>
 
             {/* Security note */}

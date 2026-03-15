@@ -42,6 +42,7 @@ import ChatSessionPage from './pages/session/ChatSessionPage'
 import AudioSessionPage from './pages/session/AudioSessionPage'
 import VideoSessionPage from './pages/session/VideoSessionPage'
 import SessionEndPage from './pages/session/SessionEndPage'
+import LiveChatPage from './pages/session/LiveChatPage'
 
 // Admin pages
 import AdminDashboard from './pages/admin/Dashboard'
@@ -216,11 +217,12 @@ export default function App() {
         </Route>
 
         {/* ── Session routes (fullscreen, no layout wrapper) ── */}
-        <Route path="/session/connecting" element={<ConnectingPage />} />
-        <Route path="/session/chat"       element={<ChatSessionPage />} />
-        <Route path="/session/audio"      element={<AudioSessionPage />} />
-        <Route path="/session/video"      element={<VideoSessionPage />} />
-        <Route path="/session/end"        element={<SessionEndPage />} />
+        <Route path="/session/connecting"   element={<ConnectingPage />} />
+        <Route path="/session/chat"         element={<ChatSessionPage />} />
+        <Route path="/session/audio"        element={<AudioSessionPage />} />
+        <Route path="/session/video"        element={<VideoSessionPage />} />
+        <Route path="/session/end"          element={<SessionEndPage />} />
+        <Route path="/session/live/:sessionId" element={<LiveChatPage />} />
 
         {/* ── Super Admin panel ── */}
         <Route

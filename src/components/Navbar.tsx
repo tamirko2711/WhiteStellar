@@ -193,7 +193,7 @@ function NotifDropdown({ notifications, onClose, onMarkAllRead }: NotifDropdownP
 function ProfileDropdown({ onClose }: { onClose: () => void }) {
   const ref = useRef<HTMLDivElement>(null)
   const navigate = useNavigate()
-  const { user, logout } = useAuthStore()
+  const { user, userType, logout } = useAuthStore()
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -241,9 +241,12 @@ function ProfileDropdown({ onClose }: { onClose: () => void }) {
           <p className="text-sm font-semibold" style={{ color: '#F0F4FF' }}>{user?.fullName}</p>
           <span
             className="mt-1 inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold"
-            style={{ background: 'rgba(45,212,191,0.15)', color: '#2DD4BF' }}
+            style={{
+              background: userType === 'advisor' ? 'rgba(201,168,76,0.15)' : userType === 'superadmin' ? 'rgba(239,68,68,0.15)' : 'rgba(45,212,191,0.15)',
+              color: userType === 'advisor' ? '#C9A84C' : userType === 'superadmin' ? '#EF4444' : '#2DD4BF',
+            }}
           >
-            Client
+            {userType === 'advisor' ? 'Advisor' : userType === 'superadmin' ? 'Super Admin' : 'Client'}
           </span>
         </div>
       </div>

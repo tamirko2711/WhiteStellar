@@ -3,9 +3,9 @@
 // src/pages/session/SessionEndPage.tsx
 // ============================================================
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Star, MessageSquare, Mic, Video, Wallet, Home } from 'lucide-react'
+import { Star, MessageSquare, Mic, Video, Wallet, Home, Clock } from 'lucide-react'
 import { useSessionStore } from '../../store/sessionStore'
 import { useAuthStore } from '../../store/authStore'
 import Toast from '../../components/Toast'
@@ -45,12 +45,13 @@ export default function SessionEndPage() {
   const navigate = useNavigate()
   const {
     sessionType, advisorId, advisorName, advisorAvatar,
+    clientName, clientAvatar,
     elapsedSeconds, totalCost, walletBalance,
     initialFreeSeconds,
     resetSession,
   } = useSessionStore()
 
-  const { user } = useAuthStore()
+  const { user, userType } = useAuthStore()
 
   const [rating, setRating] = useState(0)
   const [review, setReview] = useState('')
@@ -78,18 +79,100 @@ export default function SessionEndPage() {
   const TypeIcon = sessionType ? TYPE_ICON[sessionType] : MessageSquare
   const typeLabel = sessionType ? TYPE_LABEL[sessionType] : 'Session'
 
+  // Capture whether a real session exists on initial mount.
+  // useRef persists across re-renders, so resetSession() clearing Zustand state
+  // won't cause the guard to misfire on the same render cycle.
+  const hasSession = useRef(advisorName.length > 0 || clientName.length > 0)
+
   // Guard: if no ended session, redirect home
-  if (!advisorName) {
+  if (!hasSession.current) {
     navigate('/', { replace: true })
     return null
   }
 
+  // ── Advisor-specific end page (no review form) ─────────────
+  if (userType === 'advisor') {
+    const totalMinutes = Math.floor(elapsedSeconds / 60)
+    const totalSecs = elapsedSeconds % 60
+    const durationLabel = `${totalMinutes}m ${totalSecs}s`
+    const isValidAvatar = typeof clientAvatar === 'string' && clientAvatar.trim().length > 0
+    const initial = (clientName || '?').trim()[0].toUpperCase()
+
+    return (
+      <>
+        <style>{`@keyframes ws-end-fade { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: translateY(0); } }`}</style>
+        <div style={{
+          position: 'fixed', inset: 0, background: '#080C16', overflowY: 'auto', zIndex: 200,
+          display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '32px 20px 60px',
+        }}>
+          <div style={{ width: '100%', maxWidth: '480px', animation: 'ws-end-fade 0.4s ease both' }}>
+
+            <div style={{
+              background: '#0D1221', border: '1px solid #1A2235',
+              borderRadius: '20px', padding: '28px', marginBottom: '20px',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '20px' }}>
+                <Star size={16} color="#C9A84C" fill="#C9A84C" />
+                <span style={{ color: '#8B9BB4', fontSize: '13px', fontWeight: 600 }}>WhiteStellar</span>
+              </div>
+
+              <h1 style={{
+                color: '#F0F4FF', fontWeight: 700, fontSize: '22px',
+                fontFamily: "'Playfair Display', serif", margin: '0 0 20px',
+              }}>
+                Session Completed ✓
+              </h1>
+
+              {/* Client card */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', marginBottom: '20px' }}>
+                {isValidAvatar
+                  ? <img src={clientAvatar} alt={clientName} style={{ width: '64px', height: '64px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #C9A84C' }} />
+                  : (
+                    <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#1A2C45', border: '2px solid #C9A84C', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <span style={{ color: '#C9A84C', fontWeight: 700, fontSize: '24px' }}>{initial}</span>
+                    </div>
+                  )
+                }
+                <div>
+                  <p style={{ color: '#F0F4FF', fontWeight: 700, fontSize: '16px', margin: '0 0 6px' }}>
+                    Session with {clientName}
+                  </p>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#8B9BB4', fontSize: '13px' }}>
+                    <Clock size={13} />
+                    {durationLabel}
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ background: '#080C16', borderRadius: '12px', padding: '16px' }}>
+                <p style={{ color: '#4B5563', fontSize: '11px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 10px' }}>Session Summary</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ color: '#8B9BB4', fontSize: '13px' }}>Duration</span>
+                  <span style={{ color: '#F0F4FF', fontWeight: 600, fontSize: '13px' }}>{durationLabel}</span>
+                </div>
+              </div>
+            </div>
+
+            <button
+              onClick={() => { resetSession(); navigate('/advisor/dashboard') }}
+              style={{
+                width: '100%', padding: '15px',
+                background: 'linear-gradient(135deg,#C9A84C,#E8C96D)',
+                border: 'none', borderRadius: '14px',
+                color: '#0B0F1A', fontWeight: 700, fontSize: '15px', cursor: 'pointer',
+              }}
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </>
+    )
+  }
+
   function handleSubmitReview() {
     showToast('Thank you for your review! ✨')
-    setTimeout(() => {
-      resetSession()
-      navigate('/')
-    }, 1500)
+    setTimeout(() => { resetSession(); navigate('/') }, 1500)
   }
 
   function handleSkip() {

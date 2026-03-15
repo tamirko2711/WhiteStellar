@@ -11,6 +11,7 @@ import {
   User, Calendar, DollarSign,
 } from 'lucide-react'
 import { CLIENTS, getSessionsByAdvisor } from '../../../data/advisors'
+import { useAuthStore } from '../../../store/authStore'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -458,6 +459,8 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
 // ─── Main page ────────────────────────────────────────────────
 
 export default function AdvisorClients() {
+  const { user } = useAuthStore()
+  const isRealUser = !!(user && !user.id.startsWith('dev-'))
   const [clients, setClients] = useState<ClientMeta[]>(INITIAL_CLIENTS)
   const [filter, setFilter] = useState<FilterPill>('all')
   const [search, setSearch] = useState('')
@@ -466,6 +469,24 @@ export default function AdvisorClients() {
   const [noteTarget, setNoteTarget] = useState<ClientMeta | null>(null)
 
   const sessions = getSessionsByAdvisor(1)
+
+  if (isRealUser) {
+    return (
+      <div style={{ maxWidth: '900px' }}>
+        <div style={{ marginBottom: '28px' }}>
+          <h1 style={{ color: '#F0F4FF', fontWeight: 700, fontSize: '22px', margin: '0 0 4px' }}>My Clients</h1>
+          <p style={{ color: '#8B9BB4', fontSize: '14px', margin: 0 }}>View and manage all clients you've had sessions with.</p>
+        </div>
+        <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+          <User size={44} style={{ color: '#1E2D45', margin: '0 auto 14px', display: 'block' }} />
+          <p style={{ color: '#8B9BB4', fontSize: '16px', fontWeight: 600, margin: '0 0 8px' }}>No clients yet</p>
+          <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>
+            Clients will appear here after you complete sessions with them.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   const filtered = clients
     .filter(c => {

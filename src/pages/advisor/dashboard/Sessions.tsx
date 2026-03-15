@@ -1,8 +1,23 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { MessageCircle, Mic, Video, ChevronDown, ChevronUp, FileText, X } from 'lucide-react'
 import { format } from 'date-fns'
 import { SESSIONS, CLIENTS, getSessionsByAdvisor, type Session } from '../../../data/advisors'
 import Toast from '../../../components/Toast'
+import { useAuthStore } from '../../../store/authStore'
+import { getAdvisorSessions } from '../../../lib/api/sessions'
+import { getAdvisorByUserId } from '../../../lib/api/advisorProfile'
+
+interface RealSession {
+  id: number
+  type: 'chat' | 'audio' | 'video'
+  client_name: string
+  price_per_minute: number
+  duration_minutes: number | null
+  total_cost: number | null
+  status: string
+  started_at: string
+  ended_at: string | null
+}
 
 // ─── Constants ────────────────────────────────────────────────
 
@@ -196,9 +211,75 @@ function SessionCard({ session, expanded, onToggle, onNote, hasNote }: {
   )
 }
 
+// ─── Real session card (real users) ───────────────────────────
+
+function RealSessionCard({ session }: { session: RealSession }) {
+  const typeStyle = TYPE_COLORS[session.type] ?? TYPE_COLORS.chat
+  const clientName = session.client_name || 'Client'
+  const net = session.duration_minutes && session.price_per_minute
+    ? +((session.duration_minutes * session.price_per_minute) * 0.7).toFixed(2)
+    : 0
+  const isCompleted = session.status === 'completed'
+
+  return (
+    <div style={{ background: '#131929', border: '1px solid #1E2D45', borderRadius: '14px', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', gap: '14px', padding: '16px 18px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: '1 1 200px', minWidth: 0 }}>
+          <div style={{ width: '44px', height: '44px', borderRadius: '50%', flexShrink: 0,
+            background: 'linear-gradient(135deg,#1E2D45,#131929)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <span style={{ color: '#C9A84C', fontWeight: 700, fontSize: '16px' }}>{clientName[0]}</span>
+          </div>
+          <div style={{ minWidth: 0 }}>
+            <p style={{ fontWeight: 700, color: '#F0F4FF', fontSize: '14px', margin: '0 0 2px' }}>{clientName}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '3px',
+                background: typeStyle.bg, color: typeStyle.color,
+                borderRadius: '20px', padding: '1px 7px', fontSize: '11px', fontWeight: 600 }}>
+                {session.type === 'video' ? <Video size={10} /> : session.type === 'audio' ? <Mic size={10} /> : <MessageCircle size={10} />}
+                {session.type.charAt(0).toUpperCase() + session.type.slice(1)}
+              </span>
+              <span style={{ color: '#4B5563', fontSize: '11px' }}>
+                {format(new Date(session.started_at), 'MMM d, yyyy')}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div style={{ flex: '0 1 140px', textAlign: 'center' }}>
+          <p style={{ color: '#F0F4FF', fontWeight: 600, fontSize: '13px', margin: '0 0 1px' }}>
+            {session.duration_minutes ? `${session.duration_minutes} min` : '—'}
+          </p>
+          <p style={{ color: '#8B9BB4', fontSize: '11px', margin: '0 0 1px' }}>
+            ${session.price_per_minute.toFixed(2)}/min
+          </p>
+          <p style={{ color: '#C9A84C', fontWeight: 700, fontSize: '14px', margin: 0 }}>
+            {net > 0 ? `+$${net}` : '—'}
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+          <span style={{
+            padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 600,
+            background: isCompleted ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+            color: isCompleted ? '#22C55E' : '#EF4444',
+          }}>
+            {isCompleted ? 'Completed' : 'Cancelled'}
+          </span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Sessions page ────────────────────────────────────────────
 
 export default function AdvisorSessions() {
+  const { user } = useAuthStore()
+  const isRealUser = !!(user && !user.id.startsWith('dev-'))
+
+  const [realSessions, setRealSessions]   = useState<RealSession[]>([])
+  const [loadingReal, setLoadingReal]     = useState(false)
+
   const [statusFilter, setStatusFilter] = useState<StatusKey>('all')
   const [dateFrom, setDateFrom]         = useState('')
   const [dateTo, setDateTo]             = useState('')
@@ -209,6 +290,16 @@ export default function AdvisorSessions() {
     1001: SESSIONS.find(s => s.id === 1001)?.notes ?? '',
   })
   const [toast, setToast] = useState({ msg: '', visible: false })
+
+  useEffect(() => {
+    if (!isRealUser || !user) return
+    setLoadingReal(true)
+    getAdvisorByUserId(user.id)
+      .then(rec => rec ? getAdvisorSessions(rec.id) : [])
+      .then(data => setRealSessions(data as RealSession[]))
+      .catch(console.error)
+      .finally(() => setLoadingReal(false))
+  }, [isRealUser, user?.id])
 
   function showToast(msg: string) {
     setToast({ msg, visible: true })
@@ -230,6 +321,47 @@ export default function AdvisorSessions() {
     return true
   })
 
+  // ── Real user view ──────────────────────────────────────────
+  if (isRealUser) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+        <div>
+          <h1 style={{ fontFamily: "'Playfair Display', serif", fontSize: '24px', fontWeight: 700, color: '#F0F4FF', margin: '0 0 4px' }}>
+            My Sessions
+          </h1>
+          <p style={{ color: '#8B9BB4', fontSize: '14px', margin: 0 }}>
+            {loadingReal ? 'Loading…' : `${realSessions.length} completed session${realSessions.length !== 1 ? 's' : ''}`}
+          </p>
+        </div>
+
+        {loadingReal ? (
+          <div style={{ textAlign: 'center', padding: '48px 0' }}>
+            <div style={{ width: '28px', height: '28px', border: '3px solid #1E2D45', borderTopColor: '#C9A84C',
+              borderRadius: '50%', animation: 'spin 0.7s linear infinite', margin: '0 auto' }} />
+            <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          </div>
+        ) : realSessions.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '64px 0' }}>
+            <MessageCircle size={40} style={{ color: '#1E2D45', margin: '0 auto 12px', display: 'block' }} />
+            <p style={{ color: '#8B9BB4', fontSize: '15px', margin: '0 0 6px', fontWeight: 600 }}>No sessions yet</p>
+            <p style={{ color: '#4B5563', fontSize: '13px', margin: 0 }}>
+              Completed sessions will appear here once clients join your live sessions.
+            </p>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {realSessions.map(s => (
+              <RealSessionCard key={s.id} session={s} />
+            ))}
+          </div>
+        )}
+
+        <Toast message={toast.msg} visible={toast.visible} />
+      </div>
+    )
+  }
+
+  // ── Dev mode view ───────────────────────────────────────────
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
       <div>

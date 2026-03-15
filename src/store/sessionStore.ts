@@ -5,6 +5,8 @@
 
 import { create } from 'zustand'
 import { deductFromWallet } from '../lib/api/wallet'
+import { endSession as endSessionAPI } from '../lib/api/sessions'
+import { supabase } from '../lib/supabase'
 import { useAuthStore } from './authStore'
 
 // ─── Types ────────────────────────────────────────────────────
@@ -30,11 +32,13 @@ export interface StartSessionParams {
   pricePerMinute: number
   walletBalance: number
   isNewClient?: boolean
+  supabaseSessionId?: number | null
 }
 
 interface SessionState {
   // Metadata
   sessionId: string | null
+  supabaseSessionId: number | null
   sessionType: 'chat' | 'audio' | 'video' | null
   status: 'idle' | 'requesting' | 'connecting' | 'active' | 'ending' | 'ended'
 
@@ -72,12 +76,14 @@ interface SessionState {
   toggleHold: () => void
   addMessage: (message: ChatMessage) => void
   resetSession: () => void
+  setEnded: () => void
 }
 
 // ─── Store ────────────────────────────────────────────────────
 
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessionId: null,
+  supabaseSessionId: null,
   sessionType: null,
   status: 'idle',
 
@@ -105,6 +111,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const freeSeconds = params.isNewClient ? 180 : 0
     set({
       sessionId: `session-${Date.now()}`,
+      supabaseSessionId: params.supabaseSessionId ?? null,
       sessionType: params.sessionType,
       status: 'connecting',
       clientId: params.clientId,
@@ -136,7 +143,6 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         const newBalance = await deductFromWallet(
           state.clientId,
           state.totalCost,
-          state.sessionId,
           `Session with ${state.advisorName}`,
         )
         useAuthStore.getState().updateWalletBalance(newBalance)
@@ -144,6 +150,35 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         console.error('Failed to deduct session cost from wallet:', err)
       }
     }
+
+    // Persist session completion to Supabase
+    if (state.supabaseSessionId) {
+      try {
+        await endSessionAPI(state.supabaseSessionId, state.elapsedSeconds, state.totalCost)
+      } catch (err) {
+        console.error('Failed to end session in Supabase:', err)
+      }
+
+      // Increment advisor total_sessions
+      if (state.advisorId) {
+        try {
+          const { data: adv } = await supabase
+            .from('advisors')
+            .select('total_sessions')
+            .eq('id', state.advisorId)
+            .single()
+          if (adv) {
+            await supabase
+              .from('advisors')
+              .update({ total_sessions: (adv.total_sessions ?? 0) + 1 })
+              .eq('id', state.advisorId)
+          }
+        } catch (err) {
+          console.error('Failed to increment total_sessions:', err)
+        }
+      }
+    }
+
     set({ status: 'ended' })
   },
 
@@ -176,8 +211,11 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   addMessage: (message) => set(s => ({ messages: [...s.messages, message] })),
 
+  setEnded: () => set({ status: 'ended' }),
+
   resetSession: () => set({
     sessionId: null,
+    supabaseSessionId: null,
     sessionType: null,
     status: 'idle',
     clientId: null,

@@ -1,12 +1,14 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, MessageCircle, Users, DollarSign, Star, User,
-  Settings, HelpCircle, LogOut,
+  Settings, HelpCircle, LogOut, Bell,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
+import LogoutConfirmModal from '../components/modals/LogoutConfirmModal'
 import { useAdvisorStore } from '../store/advisorStore'
 import { supabase } from '../lib/supabase'
+import { updateSessionStatus } from '../lib/api/sessions'
 import Toast from '../components/Toast'
 
 // ─── Types ────────────────────────────────────────────────────
@@ -49,6 +51,8 @@ const AVAIL_CONFIG = {
   busy:    { color: '#F59E0B', bg: 'rgba(245,158,11,0.12)', border: 'rgba(245,158,11,0.3)', label: 'Busy'      },
   offline: { color: '#4B5563', bg: 'rgba(75,85,99,0.12)',   border: 'rgba(75,85,99,0.3)',   label: 'Offline'   },
 }
+
+const TYPE_LABEL: Record<string, string> = { chat: 'Chat', audio: 'Audio', video: 'Video' }
 
 // ─── Sub-components ───────────────────────────────────────────
 
@@ -131,9 +135,17 @@ function TabLink({ icon: Icon, label, to, end = false }: NavItem) {
 
 export default function AdvisorDashboardLayout() {
   const { user, logout } = useAuthStore()
-  const { availability, setAvailability } = useAdvisorStore()
+  const {
+    availability, setAvailability,
+    advisorDbId, setAdvisorDbId,
+    incomingSession, countdown,
+    setIncomingSession, clearIncomingSession, tickCountdown,
+  } = useAdvisorStore()
   const navigate = useNavigate()
   const [toast, setToast] = useState({ msg: '', visible: false })
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+
+  const isRealUser = user && !user.id.startsWith('dev-')
 
   function showToast(msg: string) {
     setToast({ msg, visible: true })
@@ -145,9 +157,8 @@ export default function AdvisorDashboardLayout() {
     setAvailability(next)
     if (next === 'online')  showToast('You are now visible to clients ✨')
     if (next === 'offline') showToast('You are now offline.')
-    // Persist to Supabase (fire and forget)
     if (user?.id) {
-      supabase.from('advisors').update({ status: next }).eq('profile_id', user.id).then(() => {})
+      supabase.from('advisors').update({ status: next }).eq('user_id', user.id).then(() => {})
     }
   }
 
@@ -156,10 +167,116 @@ export default function AdvisorDashboardLayout() {
     navigate('/')
   }
 
+  // ── Fetch advisor DB id (+ real avatar) once on login ──────
+  useEffect(() => {
+    if (!isRealUser || advisorDbId !== null) return
+    supabase
+      .from('advisors')
+      .select('id, avatar')
+      .eq('user_id', user!.id)
+      .single()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then(({ data }: { data: any }) => {
+        if (data?.id) setAdvisorDbId(Number(data.id))
+        // Sync the advisor's photo from the advisors table into authStore so
+        // all avatar components (Navbar, sidebar) show the real photo instead of initials.
+        if (data?.avatar) {
+          useAuthStore.setState(s =>
+            s.user ? { user: { ...s.user, avatar: data.avatar } } : {}
+          )
+        }
+      })
+  }, [isRealUser, user?.id])
+
+  // ── Re-check for existing pending session on every mount ───
+  // Handles: advisor navigated away while a pending session was waiting
+  useEffect(() => {
+    if (!isRealUser || !advisorDbId) return
+    supabase
+      .from('sessions')
+      .select('id, client_id, client_name, type, price_per_minute')
+      .eq('advisor_id', advisorDbId)
+      .eq('status', 'pending')
+      .limit(1)
+      .single()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then(({ data }: { data: any }) => {
+        if (!data) return
+        // Only show if not already tracking this session
+        if (incomingSession?.id === Number(data.id)) return
+        setIncomingSession({
+          id: Number(data.id),
+          clientId: String(data.client_id ?? ''),
+          clientName: String(data.client_name ?? 'Client'),
+          sessionType: (data.type as 'chat' | 'audio' | 'video') ?? 'chat',
+          pricePerMinute: Number(data.price_per_minute ?? 0),
+        })
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [advisorDbId])
+
+  // ── Real-time subscription for NEW pending sessions ────────
+  useEffect(() => {
+    if (!isRealUser || !advisorDbId) return
+    const channel = supabase
+      .channel(`adv-layout-incoming-${advisorDbId}`)
+      .on('postgres_changes', {
+        event: 'INSERT',
+        schema: 'public',
+        table: 'sessions',
+        filter: `advisor_id=eq.${advisorDbId}`,
+      }, (payload) => {
+        const s = payload.new as Record<string, unknown>
+        if (s.status === 'pending') {
+          setIncomingSession({
+            id: Number(s.id),
+            clientId: String(s.client_id ?? ''),
+            clientName: String(s.client_name ?? 'Client'),
+            sessionType: (s.type as 'chat' | 'audio' | 'video') ?? 'chat',
+            pricePerMinute: Number(s.price_per_minute ?? 0),
+          })
+        }
+      })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [advisorDbId])
+
+  // ── Countdown timer + auto-decline ────────────────────────
+  // Use a ref so the interval can read the session id without stale closure
+  const incomingSessionIdRef = useRef<number | null>(null)
+  useEffect(() => { incomingSessionIdRef.current = incomingSession?.id ?? null }, [incomingSession])
+
+  useEffect(() => {
+    if (!incomingSession) return
+    const id = setInterval(() => {
+      const currentCountdown = useAdvisorStore.getState().countdown
+      if (currentCountdown <= 1) {
+        const sid = incomingSessionIdRef.current
+        if (sid) updateSessionStatus(sid, 'cancelled').catch(() => {})
+        clearIncomingSession()
+        return
+      }
+      tickCountdown()
+    }, 1000)
+    return () => clearInterval(id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [incomingSession?.id])
+
   const avail = AVAIL_CONFIG[availability]
+  const timerDisplay = `${Math.floor(countdown / 60)}:${String(countdown % 60).padStart(2, '0')}`
+  const { pathname } = useLocation()
+  const isOnOverview = pathname === '/advisor/dashboard'
 
   return (
     <>
+      <style>{`
+        @keyframes adv-notif-pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(201,168,76,0.25), 0 8px 32px rgba(0,0,0,0.5); }
+          50%       { box-shadow: 0 0 0 8px rgba(201,168,76,0), 0 8px 32px rgba(0,0,0,0.5); }
+        }
+      `}</style>
+
       <div style={{ display: 'flex', background: '#0B0F1A', minHeight: 'calc(100vh - 64px)' }}>
 
         {/* ── Sidebar (desktop) ── */}
@@ -179,7 +296,6 @@ export default function AdvisorDashboardLayout() {
                 alt={user?.fullName ?? ''}
                 style={{ width: '56px', height: '56px', borderRadius: '50%', border: '2px solid #C9A84C' }}
               />
-              {/* Status dot */}
               <span style={{
                 position: 'absolute', bottom: '2px', right: '2px',
                 width: '12px', height: '12px', borderRadius: '50%',
@@ -200,7 +316,6 @@ export default function AdvisorDashboardLayout() {
               Advisor
             </span>
 
-            {/* Availability toggle — most important control */}
             <div>
               <p style={{ fontSize: '10px', color: '#4B5563', textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 6px' }}>
                 Availability
@@ -226,14 +341,12 @@ export default function AdvisorDashboardLayout() {
             </div>
           </div>
 
-          {/* Nav items */}
           <nav style={{ flex: 1, padding: '8px 0' }}>
             {NAV_ITEMS.map(item => (
               <SidebarLink key={item.to} {...item} />
             ))}
           </nav>
 
-          {/* Rate mini-display */}
           <div style={{ padding: '12px 20px', borderTop: '1px solid #1E2D45', borderBottom: '1px solid #1E2D45' }}>
             <p style={{ fontSize: '10px', color: '#4B5563', textTransform: 'uppercase', letterSpacing: '0.05em', margin: '0 0 8px' }}>
               Your Rates
@@ -250,10 +363,9 @@ export default function AdvisorDashboardLayout() {
             ))}
           </div>
 
-          {/* Bottom actions */}
           <div style={{ padding: '8px 0 12px' }}>
             <BottomBtn icon={HelpCircle} label="Help & Support" />
-            <BottomBtn icon={LogOut} label="Sign Out" danger onClick={handleLogout} />
+            <BottomBtn icon={LogOut} label="Sign Out" danger onClick={() => setShowLogoutConfirm(true)} />
           </div>
         </aside>
 
@@ -273,7 +385,68 @@ export default function AdvisorDashboardLayout() {
         ))}
       </div>
 
+      {/* ── Floating incoming-request notification ── */}
+      {/* Shown on all advisor pages EXCEPT the Overview (which shows the full card) */}
+      {incomingSession && !isOnOverview && (
+        <div
+          onClick={() => navigate('/advisor/dashboard')}
+          style={{
+            position: 'fixed',
+            bottom: '90px',   // sits above the mobile tab bar
+            right: '20px',
+            zIndex: 999,
+            background: '#0D1221',
+            border: '2px solid #C9A84C',
+            borderRadius: '16px',
+            padding: '14px 16px',
+            width: '288px',
+            cursor: 'pointer',
+            animation: 'adv-notif-pulse 1.5s ease infinite',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px' }}>
+            <div style={{
+              width: '36px', height: '36px', borderRadius: '50%', flexShrink: 0,
+              background: 'rgba(201,168,76,0.12)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+            }}>
+              <Bell size={16} color="#C9A84C" />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={{ color: '#F0F4FF', fontWeight: 700, fontSize: '13px', margin: '0 0 2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {incomingSession.clientName}
+              </p>
+              <p style={{ color: '#8B9BB4', fontSize: '12px', margin: 0 }}>
+                Requesting a {TYPE_LABEL[incomingSession.sessionType]} session
+              </p>
+            </div>
+            <span style={{
+              color: '#EF4444', fontWeight: 700, fontSize: '18px',
+              fontVariantNumeric: 'tabular-nums', flexShrink: 0,
+            }}>
+              {timerDisplay}
+            </span>
+          </div>
+          <div style={{
+            width: '100%', padding: '9px',
+            background: 'linear-gradient(135deg,#C9A84C,#E8C96D)',
+            border: 'none', borderRadius: '10px',
+            color: '#0B0F1A', fontWeight: 700, fontSize: '13px',
+            textAlign: 'center',
+          }}>
+            View Request →
+          </div>
+        </div>
+      )}
+
       <Toast message={toast.msg} visible={toast.visible} />
+
+      {showLogoutConfirm && (
+        <LogoutConfirmModal
+          onConfirm={handleLogout}
+          onCancel={() => setShowLogoutConfirm(false)}
+        />
+      )}
     </>
   )
 }

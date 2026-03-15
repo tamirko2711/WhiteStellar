@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { MessageCircle, Mic, Video, ChevronDown, ChevronUp, Star, X } from 'lucide-react'
 import { format } from 'date-fns'
-import { getClientSessions } from '../../../lib/api/sessions'
+import { getClientSessions, markSessionReviewed } from '../../../lib/api/sessions'
+import { submitReview } from '../../../lib/api/reviews'
 import { useAuthStore } from '../../../store/authStore'
 import Toast from '../../../components/Toast'
 
@@ -29,17 +30,17 @@ function mapSession(raw: Record<string, unknown>): SessionData {
   return {
     id: String(raw.id),
     advisorId: Number(raw.advisor_id),
-    advisorName: advisors?.full_name ?? 'Advisor',
-    advisorAvatar: advisors?.avatar_url ?? '',
-    startedAt: String(raw.created_at ?? ''),
-    endedAt: String(raw.ended_at ?? raw.created_at ?? ''),
-    durationMinutes: Math.floor(Number(raw.duration_seconds ?? 0) / 60),
+    advisorName: advisors?.full_name ?? String(raw.advisor_name ?? 'Advisor'),
+    advisorAvatar: advisors?.avatar ?? '',
+    startedAt: String(raw.started_at ?? raw.created_at ?? ''),
+    endedAt: String(raw.ended_at ?? raw.started_at ?? raw.created_at ?? ''),
+    durationMinutes: Number(raw.duration_minutes ?? 0),
     pricePerMinute: Number(raw.price_per_minute ?? 0),
     totalCost: Number(raw.total_cost ?? 0),
     hasReview: Boolean(raw.has_review),
     notes: raw.notes as string | null,
     status: String(raw.status ?? 'completed'),
-    type: (raw.session_type as 'chat' | 'audio' | 'video') ?? 'chat',
+    type: (raw.type as 'chat' | 'audio' | 'video') ?? 'chat',
   }
 }
 
@@ -63,7 +64,7 @@ const TYPE_COLORS: Record<string, { bg: string; color: string }> = {
 interface RatingModalProps {
   session: SessionData
   onClose: () => void
-  onSubmit: () => void
+  onSubmit: (stars: number, comment: string) => Promise<void>
 }
 
 function RatingModal({ session, onClose, onSubmit }: RatingModalProps) {
@@ -75,8 +76,7 @@ function RatingModal({ session, onClose, onSubmit }: RatingModalProps) {
   async function handleSubmit() {
     if (stars === 0) return
     setLoading(true)
-    await new Promise(r => setTimeout(r, 1000))
-    onSubmit()
+    await onSubmit(stars, comment)
   }
 
   return (
@@ -538,7 +538,21 @@ export default function Sessions() {
         <RatingModal
           session={ratingSession}
           onClose={() => setRatingSession(null)}
-          onSubmit={() => {
+          onSubmit={async (stars, comment) => {
+            if (!user) return
+            await submitReview({
+              advisorId: ratingSession.advisorId,
+              clientId: user.id,
+              clientName: user.fullName,
+              clientAvatar: user.avatar ?? undefined,
+              rating: stars,
+              comment,
+              sessionType: ratingSession.type,
+            })
+            await markSessionReviewed(Number(ratingSession.id))
+            setSessions(prev =>
+              prev.map(s => s.id === ratingSession.id ? { ...s, hasReview: true } : s)
+            )
             setRatingSession(null)
             showToast('Thank you for your review! ✨')
           }}

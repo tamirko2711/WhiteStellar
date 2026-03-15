@@ -3,12 +3,67 @@
 // src/pages/CategoryPage.tsx
 // ============================================================
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { Star, Users, Clock, SlidersHorizontal } from 'lucide-react'
 import { CATEGORIES, ADVISORS } from '../data/advisors'
 import { getArticlesByCategory } from '../data/articles'
 import AdvisorCard from '../components/AdvisorCard'
+import { getAdvisors } from '../lib/api/advisors'
+import type { Advisor } from '../types'
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapRow(row: any): Advisor {
+  const sessionTypes: Advisor['sessionTypes'] = []
+  if (row.chat_price)  sessionTypes.push('chat')
+  if (row.audio_price) sessionTypes.push('audio')
+  if (row.video_price) sessionTypes.push('video')
+  return {
+    id: row.id,
+    userId: 0,
+    fullName: row.full_name ?? 'Advisor',
+    shortBio: row.short_bio ?? '',
+    longBio: row.long_bio ?? '',
+    avatar: row.avatar ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(row.full_name ?? 'A')}&background=1E2D45&color=C9A84C`,
+    backgroundImage: row.background_image ?? 'https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=800',
+    status: row.status ?? 'offline',
+    accountStatus: row.account_status ?? 'active',
+    isTopAdvisor: row.is_top_advisor ?? false,
+    isNew: !row.is_top_advisor,
+    languages: [],
+    categories: (row.advisor_categories ?? []).map((jc: any) => ({
+      id: jc.category_id,
+      slug: jc.categories?.slug ?? '',
+      title: jc.categories?.title ?? '',
+      icon: 'Star',
+      description: '',
+      advisorCount: 0,
+    })),
+    specializations: (row.advisor_specializations ?? []).map((js: any) => ({
+      id: js.specialization_id,
+      title: js.specializations?.title ?? '',
+      categoryId: 0,
+    })),
+    skillsAndMethods: (row.advisor_skills ?? []).map((sk: any) => ({
+      id: sk.skill_id,
+      title: sk.skills_and_methods?.title ?? '',
+    })),
+    sessionTypes,
+    pricing: {
+      chat: row.chat_price ?? null,
+      audio: row.audio_price ?? null,
+      video: row.video_price ?? null,
+    },
+    rating: row.rating ?? 5.0,
+    reviewCount: row.review_count ?? 0,
+    totalSessions: row.total_sessions ?? 0,
+    yearsActive: row.years_active ?? 0,
+    responseTime: row.response_time ?? '—',
+    withdrawalMethod: 'paypal',
+    joinedAt: row.created_at ?? new Date().toISOString(),
+    reviews: [],
+  }
+}
 
 // ─── Category-specific content ────────────────────────────────
 
@@ -156,7 +211,7 @@ const DEFAULT_CONTENT = {
 
 type SortKey = 'recommended' | 'rating' | 'reviews' | 'price-low' | 'price-high'
 
-function sortAdvisors(advisors: typeof ADVISORS, sort: SortKey) {
+function sortAdvisors(advisors: Advisor[], sort: SortKey) {
   const copy = [...advisors]
   switch (sort) {
     case 'rating':
@@ -192,6 +247,15 @@ export default function CategoryPage() {
   const { slug } = useParams<{ slug: string }>()
   const navigate = useNavigate()
   const [sort, setSort] = useState<SortKey>('recommended')
+  const [liveAdvisors, setLiveAdvisors] = useState<Advisor[]>([])
+
+  useEffect(() => {
+    getAdvisors({ sortBy: 'rating' })
+      .then(rows => { if (rows.length > 0) setLiveAdvisors(rows.map(mapRow)) })
+      .catch(console.error)
+  }, [])
+
+  const advisorSource = liveAdvisors.length > 0 ? liveAdvisors : ADVISORS
 
   const category = CATEGORIES.find(c => c.slug === slug)
   const content = (slug && CATEGORY_CONTENT[slug]) ? CATEGORY_CONTENT[slug] : DEFAULT_CONTENT
@@ -199,10 +263,10 @@ export default function CategoryPage() {
 
   const advisors = useMemo(() => {
     const filtered = slug
-      ? ADVISORS.filter(a => a.categories.some(c => c.slug === slug))
-      : ADVISORS
+      ? advisorSource.filter(a => a.categories.some(c => c.slug === slug))
+      : advisorSource
     return sortAdvisors(filtered, sort)
-  }, [slug, sort])
+  }, [slug, sort, advisorSource])
 
   if (!category) {
     return (

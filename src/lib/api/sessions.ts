@@ -7,7 +7,9 @@ import { supabase } from '../supabase'
 
 export const createSession = async (params: {
   advisorId: number
+  advisorName: string
   clientId: string
+  clientName: string
   sessionType: 'chat' | 'audio' | 'video'
   pricePerMinute: number
 }) => {
@@ -15,10 +17,13 @@ export const createSession = async (params: {
     .from('sessions')
     .insert({
       advisor_id: params.advisorId,
+      advisor_name: params.advisorName,
       client_id: params.clientId,
-      session_type: params.sessionType,
+      client_name: params.clientName,
+      type: params.sessionType,
       price_per_minute: params.pricePerMinute,
-      status: 'in_progress',
+      status: 'pending',
+      started_at: new Date().toISOString(),
     })
     .select()
     .single()
@@ -26,8 +31,19 @@ export const createSession = async (params: {
   return data
 }
 
+export const updateSessionStatus = async (
+  sessionId: number,
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled',
+) => {
+  const { error } = await supabase
+    .from('sessions')
+    .update({ status })
+    .eq('id', sessionId)
+  if (error) throw error
+}
+
 export const endSession = async (
-  sessionId: string,
+  sessionId: number,
   durationSeconds: number,
   totalCost: number,
 ) => {
@@ -35,7 +51,7 @@ export const endSession = async (
     .from('sessions')
     .update({
       status: 'completed',
-      duration_seconds: durationSeconds,
+      duration_minutes: Math.ceil(durationSeconds / 60),
       total_cost: totalCost,
       ended_at: new Date().toISOString(),
     })
@@ -46,10 +62,18 @@ export const endSession = async (
   return data
 }
 
+export const markSessionReviewed = async (sessionId: number) => {
+  const { error } = await supabase
+    .from('sessions')
+    .update({ has_review: true })
+    .eq('id', sessionId)
+  if (error) throw error
+}
+
 export const getClientSessions = async (clientId: string) => {
   const { data, error } = await supabase
     .from('sessions')
-    .select('*, advisors(full_name, avatar_url)')
+    .select('*, advisors(full_name, avatar)')
     .eq('client_id', clientId)
     .order('created_at', { ascending: false })
   if (error) throw error

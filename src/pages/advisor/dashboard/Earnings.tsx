@@ -233,8 +233,28 @@ function StatCard({ icon, label, value, sub }: {
 // ─── Main page ────────────────────────────────────────────────
 
 export default function AdvisorEarnings() {
+  const { user } = useAuthStore()
+  const isRealUser = !!(user && !user.id.startsWith('dev-'))
   const [period, setPeriod] = useState<Period>('month')
   const [showPayout, setShowPayout] = useState(false)
+
+  if (isRealUser) {
+    return (
+      <div style={{ maxWidth: '900px' }}>
+        <div style={{ marginBottom: '28px' }}>
+          <h1 style={{ color: '#F0F4FF', fontWeight: 700, fontSize: '22px', margin: '0 0 4px' }}>Earnings</h1>
+          <p style={{ color: '#8B9BB4', fontSize: '14px', margin: 0 }}>Track your income and request payouts.</p>
+        </div>
+        <div style={{ textAlign: 'center', padding: '80px 20px' }}>
+          <DollarSign size={44} style={{ color: '#1E2D45', margin: '0 auto 14px', display: 'block' }} />
+          <p style={{ color: '#8B9BB4', fontSize: '16px', fontWeight: 600, margin: '0 0 8px' }}>No earnings yet</p>
+          <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>
+            Your earnings will appear here once you complete sessions with clients.
+          </p>
+        </div>
+      </div>
+    )
+  }
 
   const data = CHART_DATA[period]
   const totals = PERIOD_TOTALS[period]

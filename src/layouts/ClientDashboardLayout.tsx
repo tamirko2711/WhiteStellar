@@ -5,6 +5,7 @@ import {
   HelpCircle, LogOut, Wallet,
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
+import LogoutConfirmModal from '../components/modals/LogoutConfirmModal'
 
 // ─── Types ────────────────────────────────────────────────────
 
@@ -126,6 +127,7 @@ function TabLink({ icon: Icon, label, to, end = false }: NavItem) {
 export default function ClientDashboardLayout() {
   const { user, logout } = useAuthStore()
   const navigate = useNavigate()
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
 
   function handleLogout() {
     logout()
@@ -192,7 +194,7 @@ export default function ClientDashboardLayout() {
           {/* Bottom actions */}
           <div style={{ borderTop: '1px solid #1E2D45', padding: '8px 0 12px' }}>
             <BottomBtn icon={HelpCircle} label="Help & Support" />
-            <BottomBtn icon={LogOut} label="Sign Out" danger onClick={handleLogout} />
+            <BottomBtn icon={LogOut} label="Sign Out" danger onClick={() => setShowLogoutConfirm(true)} />
           </div>
         </aside>
 
@@ -215,6 +217,13 @@ export default function ClientDashboardLayout() {
           <TabLink key={tab.to} {...tab} />
         ))}
       </div>
+
+      {showLogoutConfirm && (
+        <LogoutConfirmModal
+          onConfirm={handleLogout}
+          onCancel={() => setShowLogoutConfirm(false)}
+        />
+      )}
     </>
   )
 }

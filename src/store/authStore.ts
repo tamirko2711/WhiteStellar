@@ -63,6 +63,8 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   register: async (email, password, fullName, userType) => {
     await signUp(email, password, fullName, userType)
+    // If email confirmation is disabled, the user is auto-signed-in — load their profile
+    await get().refreshProfile()
   },
 
   logout: async () => {
@@ -77,16 +79,40 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
   refreshProfile: async () => {
     try {
-      const { data: { user: supabaseUser } } = await supabase.auth.getUser()
+      const { data: { session } } = await supabase.auth.getSession()
+      const supabaseUser = session?.user
+      console.log('[auth] refreshProfile — user:', supabaseUser?.id ?? 'null')
       if (!supabaseUser) return
 
-      const { data: profile } = await supabase
+      const { data: profile, error: profileError } = await supabase
         .from('profiles')
         .select('full_name, avatar_url, user_type, wallet_balance')
         .eq('id', supabaseUser.id)
         .single()
 
-      if (!profile) return
+      console.log('[auth] profile fetch —', profile ? `type=${profile.user_type}` : `null (error: ${profileError?.message})`)
+
+      if (!profile) {
+        // Profile query failed (RLS, network, etc.). If we already have a valid session
+        // loaded, preserve it — don't kick the user out due to a transient DB error.
+        if (get().isLoggedIn) return
+        // First-load fallback: use user_metadata written during signup
+        const meta = (supabaseUser.user_metadata ?? {}) as Record<string, string>
+        if (meta.user_type) {
+          set({
+            isLoggedIn: true,
+            userType: meta.user_type as 'client' | 'advisor' | 'superadmin',
+            user: {
+              id: supabaseUser.id,
+              fullName: meta.full_name ?? '',
+              avatar: meta.avatar_url ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(meta.full_name ?? 'User')}&background=1E2D45&color=C9A84C`,
+              walletBalance: 0,
+              email: supabaseUser.email ?? '',
+            },
+          })
+        }
+        return
+      }
 
       set({
         isLoggedIn: true,

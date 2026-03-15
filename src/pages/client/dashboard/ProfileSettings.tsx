@@ -3,6 +3,7 @@ import { Camera, Trash2, Eye, EyeOff, LayoutGrid } from 'lucide-react'
 import { format } from 'date-fns'
 import { CLIENTS } from '../../../data/advisors'
 import { useAuthStore } from '../../../store/authStore'
+import { supabase } from '../../../lib/supabase'
 import Toast from '../../../components/Toast'
 
 // ─── Constants ────────────────────────────────────────────────
@@ -159,6 +160,7 @@ export default function ProfileSettings() {
   const { user } = useAuthStore()
   const fileRef = useRef<HTMLInputElement>(null)
 
+
   // Form state (pre-filled)
   const [avatarUrl, setAvatarUrl]       = useState(user?.avatar ?? CLIENT_DATA.avatar)
   const [name, setName]                 = useState(user?.fullName ?? CLIENT_DATA.fullName)
@@ -191,17 +193,54 @@ export default function ProfileSettings() {
     setTimeout(() => setToast(t => ({ ...t, visible: false })), 2500)
   }
 
+  // Resize the selected file to 200×200 and convert to data URL so it
+  // can be stored directly in profiles.avatar_url without needing a bucket.
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
-    if (file) setAvatarUrl(URL.createObjectURL(file))
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = ev => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width = 200
+        canvas.height = 200
+        const ctx = canvas.getContext('2d')!
+        // Center-crop to square then scale to 200×200
+        const size = Math.min(img.width, img.height)
+        const sx = (img.width - size) / 2
+        const sy = (img.height - size) / 2
+        ctx.drawImage(img, sx, sy, size, size, 0, 0, 200, 200)
+        setAvatarUrl(canvas.toDataURL('image/jpeg', 0.85))
+      }
+      img.src = ev.target?.result as string
+    }
+    reader.readAsDataURL(file)
   }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault()
+    if (!user) return
     setSaving(true)
-    await new Promise(r => setTimeout(r, 1000))
-    setSaving(false)
-    showToast('Profile updated successfully ✨')
+    try {
+      await supabase.from('profiles').update({
+        full_name:     name,
+        avatar_url:    avatarUrl || null,
+        phone:         phone  || null,
+        country:       country || null,
+        date_of_birth: dob    || null,
+      }).eq('id', user.id)
+
+      // Sync authStore so Navbar and all avatars update immediately
+      useAuthStore.setState(s =>
+        s.user ? { user: { ...s.user, fullName: name, avatar: avatarUrl } } : {}
+      )
+      showToast('Profile updated successfully ✨')
+    } catch {
+      showToast('Failed to save. Please try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function handleUpdatePassword() {

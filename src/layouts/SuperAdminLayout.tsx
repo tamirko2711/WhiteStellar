@@ -4,6 +4,7 @@
 // ============================================================
 
 import { useState } from 'react'
+import LogoutConfirmModal from '../components/modals/LogoutConfirmModal'
 import { Outlet, Link, useLocation, useNavigate } from 'react-router-dom'
 import {
   LayoutDashboard, Users, UserCheck, Tag, MessageSquare,
@@ -67,6 +68,8 @@ export default function SuperAdminLayout() {
   const navigate = useNavigate()
   const [drawerOpen, setDrawerOpen] = useState(false)
 
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+
   function handleLogout() {
     logout()
     navigate('/')
@@ -126,7 +129,7 @@ export default function SuperAdminLayout() {
       {/* Sign out */}
       <div style={{ padding: '8px 0 16px', borderTop: '1px solid #1A2235' }}>
         <button
-          onClick={handleLogout}
+          onClick={() => setShowLogoutConfirm(true)}
           style={{
             display: 'flex', alignItems: 'center', gap: '10px',
             padding: '10px 20px', margin: '2px 8px', borderRadius: '8px',
@@ -220,6 +223,12 @@ export default function SuperAdminLayout() {
         </main>
       </div>
 
+      {showLogoutConfirm && (
+        <LogoutConfirmModal
+          onConfirm={handleLogout}
+          onCancel={() => setShowLogoutConfirm(false)}
+        />
+      )}
     </>
   )
 }

@@ -1,23 +1,14 @@
+import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { MessageCircle, Heart, Clock, Wallet, Video, Mic, Star } from 'lucide-react'
 import { format } from 'date-fns'
-import { SESSIONS, TRANSACTIONS, ADVISORS, CLIENTS, getAdvisorById } from '../../../data/advisors'
+import { getAdvisorById, getSessionsByClient, CLIENTS } from '../../../data/advisors'
 import { useAuthStore } from '../../../store/authStore'
+import { supabase } from '../../../lib/supabase'
 import AdvisorCard from '../../../components/AdvisorCard'
+import type { Advisor } from '../../../types'
 
 // ─── Helpers ──────────────────────────────────────────────────
-
-const CLIENT_ID = 201
-const CLIENT     = CLIENTS.find(c => c.id === CLIENT_ID)!
-const CLIENT_SESSIONS = SESSIONS
-  .filter(s => s.clientId === CLIENT_ID)
-  .sort((a, b) => new Date(b.startedAt).getTime() - new Date(a.startedAt).getTime())
-
-const SAVED_ADVISORS = ADVISORS.filter(a => CLIENT.savedAdvisors.includes(a.id)).slice(0, 3)
-
-const LAST_DEPOSIT = [...TRANSACTIONS]
-  .filter(t => t.clientId === CLIENT_ID && t.type === 'deposit')
-  .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0]
 
 function getGreeting() {
   const h = new Date().getHours()
@@ -65,7 +56,7 @@ function StatCard({ icon, value, label, sublabel, iconColor }: StatCardProps) {
   )
 }
 
-// ─── Session type badge ───────────────────────────────────────
+// ─── Session type badge colors ────────────────────────────────
 
 const TYPE_COLORS: Record<string, { bg: string; color: string }> = {
   chat:  { bg: 'rgba(45,212,191,0.12)',  color: '#2DD4BF' },
@@ -73,14 +64,127 @@ const TYPE_COLORS: Record<string, { bg: string; color: string }> = {
   video: { bg: 'rgba(139,92,246,0.12)',  color: '#8B5CF6' },
 }
 
+// ─── DB types ─────────────────────────────────────────────────
+
+interface DbSession {
+  id: number
+  advisor_id: number
+  advisor_name: string
+  type: string
+  status: string
+  duration_minutes: number
+  total_cost: number
+  started_at: string
+  has_review: boolean
+}
+
 // ─── Overview page ────────────────────────────────────────────
 
 export default function Overview() {
   const { user } = useAuthStore()
+  const [sessionsCount, setSessionsCount]   = useState(0)
+  const [savedCount, setSavedCount]         = useState(0)
+  const [recentSessions, setRecentSessions] = useState<DbSession[]>([])
+  const [savedAdvisors, setSavedAdvisors]   = useState<Advisor[]>([])
 
-  // Last session
-  const lastSession = CLIENT_SESSIONS[0]
-  const lastAdvisor = lastSession ? getAdvisorById(lastSession.advisorId) : undefined
+  const isDevMode = user?.id === 'dev-client-001'
+
+  useEffect(() => {
+    if (!user?.id) return
+
+    // Dev mode: use mock data so the dummy dashboard is fully populated
+    if (isDevMode) {
+      const mockSessions = getSessionsByClient(201)
+      setSessionsCount(mockSessions.length)
+      setRecentSessions(mockSessions.slice(0, 3).map(s => ({
+        id: s.id,
+        advisor_id: s.advisorId,
+        advisor_name: s.advisorName,
+        type: s.type,
+        status: s.status,
+        duration_minutes: s.durationMinutes,
+        total_cost: s.totalCost,
+        started_at: s.startedAt,
+        has_review: s.hasReview,
+      })))
+      const mockClient = CLIENTS.find(c => c.id === 201)
+      if (mockClient) {
+        setSavedCount(mockClient.savedAdvisors.length)
+        setSavedAdvisors(
+          mockClient.savedAdvisors.slice(0, 3)
+            .map(id => getAdvisorById(id))
+            .filter((a): a is Advisor => a !== undefined)
+        )
+      }
+      return
+    }
+
+    // Real user: fetch live data from Supabase
+    const fetchData = async () => {
+      const { data: sessions } = await supabase
+        .from('sessions')
+        .select('id, advisor_id, advisor_name, type, status, duration_minutes, total_cost, started_at, has_review')
+        .eq('client_id', user.id)
+        .order('started_at', { ascending: false })
+      if (sessions) {
+        setSessionsCount(sessions.length)
+        setRecentSessions(sessions.slice(0, 3) as DbSession[])
+      }
+
+      const { data: saved } = await supabase
+        .from('saved_advisors')
+        .select('advisor_id')
+        .eq('client_id', user.id)
+        .order('created_at', { ascending: false })
+      if (saved) {
+        setSavedCount(saved.length)
+        const ids = saved.slice(0, 3).map(s => s.advisor_id)
+        if (ids.length > 0) {
+          const { data: advisorRows } = await supabase
+            .from('advisors')
+            .select('id, full_name, avatar, short_bio, status, rating, review_count, is_top_advisor, chat_price, audio_price, video_price, total_sessions')
+            .in('id', ids)
+          if (advisorRows) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            setSavedAdvisors(advisorRows.map((a: any): Advisor => ({
+              id: a.id,
+              userId: 0,
+              fullName: a.full_name ?? '',
+              shortBio: a.short_bio ?? '',
+              longBio: '',
+              avatar: a.avatar ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(a.full_name ?? 'A')}&background=1E2D45&color=C9A84C`,
+              backgroundImage: '',
+              status: a.status ?? 'offline',
+              accountStatus: 'active',
+              isTopAdvisor: a.is_top_advisor ?? false,
+              isNew: !a.is_top_advisor,
+              languages: [],
+              categories: [],
+              specializations: [],
+              skillsAndMethods: [],
+              sessionTypes: [
+                a.chat_price != null ? 'chat' : null,
+                a.audio_price != null ? 'audio' : null,
+                a.video_price != null ? 'video' : null,
+              ].filter(Boolean) as Advisor['sessionTypes'],
+              pricing: { chat: a.chat_price, audio: a.audio_price, video: a.video_price },
+              rating: a.rating ?? 5.0,
+              reviewCount: a.review_count ?? 0,
+              totalSessions: a.total_sessions ?? 0,
+              yearsActive: 0,
+              responseTime: '—',
+              withdrawalMethod: 'paypal',
+              joinedAt: new Date().toISOString(),
+              reviews: [],
+            })))
+          }
+        }
+      }
+    }
+    fetchData().catch(console.error)
+  }, [user?.id, isDevMode])
+
+  const lastSession = recentSessions[0]
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
@@ -107,23 +211,23 @@ export default function Overview() {
       <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
         <StatCard
           icon={<MessageCircle size={20} />}
-          value={String(CLIENT.totalSessions)}
+          value={String(sessionsCount)}
           label="Total Sessions"
           sublabel="All time"
           iconColor="#2DD4BF"
         />
         <StatCard
           icon={<Heart size={20} />}
-          value={String(CLIENT.savedAdvisors.length)}
+          value={String(savedCount)}
           label="Advisors Saved"
           sublabel="In your list"
           iconColor="#EF4444"
         />
         <StatCard
           icon={<Clock size={20} />}
-          value={lastSession ? format(new Date(lastSession.startedAt), 'MMM d') : '—'}
+          value={lastSession ? format(new Date(lastSession.started_at), 'MMM d') : '—'}
           label="Last Session"
-          sublabel={lastAdvisor?.fullName ?? '—'}
+          sublabel={lastSession?.advisor_name ?? '—'}
           iconColor="#8B9BB4"
         />
       </div>
@@ -140,12 +244,14 @@ export default function Overview() {
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {CLIENT_SESSIONS.slice(0, 3).length === 0 ? (
+          {recentSessions.length === 0 ? (
             <p style={{ color: '#4B5563', fontSize: '14px', padding: '20px 0' }}>No sessions yet.</p>
           ) : (
-            CLIENT_SESSIONS.slice(0, 3).map(session => {
-              const advisor = getAdvisorById(session.advisorId)
-              const typeStyle = TYPE_COLORS[session.type]
+            recentSessions.map(session => {
+              const advisor = isDevMode ? getAdvisorById(session.advisor_id) : undefined
+              const advisorAvatar = advisor?.avatar
+                ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(session.advisor_name)}&background=1E2D45&color=C9A84C`
+              const typeStyle = TYPE_COLORS[session.type] ?? TYPE_COLORS.chat
               const isCompleted = session.status === 'completed'
 
               return (
@@ -157,16 +263,15 @@ export default function Overview() {
                     padding: '14px 20px', flexWrap: 'wrap',
                   }}
                 >
-                  {/* Avatar + name */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: '1 1 180px', minWidth: 0 }}>
                     <img
-                      src={advisor?.avatar}
-                      alt={session.advisorName}
+                      src={advisorAvatar}
+                      alt={session.advisor_name}
                       style={{ width: '36px', height: '36px', borderRadius: '50%', flexShrink: 0 }}
                     />
                     <div style={{ minWidth: 0 }}>
                       <p style={{ fontWeight: 600, color: '#F0F4FF', fontSize: '13px', margin: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {session.advisorName}
+                        {session.advisor_name}
                       </p>
                       <span style={{
                         display: 'inline-flex', alignItems: 'center', gap: '4px',
@@ -179,17 +284,15 @@ export default function Overview() {
                     </div>
                   </div>
 
-                  {/* Duration + cost */}
                   <div style={{ flex: '0 0 auto', textAlign: 'center' }}>
                     <p style={{ color: '#F0F4FF', fontWeight: 600, fontSize: '13px', margin: 0 }}>
-                      {session.durationMinutes} min · <span style={{ color: '#C9A84C' }}>${session.totalCost.toFixed(2)}</span>
+                      {session.duration_minutes} min · <span style={{ color: '#C9A84C' }}>${session.total_cost.toFixed(2)}</span>
                     </p>
                     <p style={{ color: '#4B5563', fontSize: '11px', margin: '2px 0 0' }}>
-                      {format(new Date(session.startedAt), 'MMM d, yyyy')}
+                      {format(new Date(session.started_at), 'MMM d, yyyy')}
                     </p>
                   </div>
 
-                  {/* Status + Rate */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flex: '0 0 auto' }}>
                     <span style={{
                       padding: '3px 10px', borderRadius: '20px', fontSize: '11px', fontWeight: 600,
@@ -198,7 +301,7 @@ export default function Overview() {
                     }}>
                       {isCompleted ? 'Completed' : 'Cancelled'}
                     </span>
-                    {isCompleted && !session.hasReview && (
+                    {isCompleted && !session.has_review && (
                       <button style={{
                         background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.4)',
                         color: '#C9A84C', borderRadius: '20px', padding: '3px 12px',
@@ -225,11 +328,15 @@ export default function Overview() {
             View All →
           </Link>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-          {SAVED_ADVISORS.map(advisor => (
-            <AdvisorCard key={advisor.id} advisor={advisor} />
-          ))}
-        </div>
+        {savedAdvisors.length === 0 ? (
+          <p style={{ color: '#4B5563', fontSize: '14px', padding: '20px 0' }}>No saved advisors yet.</p>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
+            {savedAdvisors.map(advisor => (
+              <AdvisorCard key={advisor.id} advisor={advisor} />
+            ))}
+          </div>
+        )}
       </section>
 
       {/* ── Wallet summary ── */}
@@ -248,11 +355,6 @@ export default function Overview() {
             <p style={{ fontSize: '36px', fontWeight: 700, color: '#C9A84C', margin: '0 0 8px' }}>
               ${user?.walletBalance.toFixed(2)}
             </p>
-            {LAST_DEPOSIT && (
-              <p style={{ color: '#4B5563', fontSize: '12px', margin: 0 }}>
-                Last deposit: ${LAST_DEPOSIT.amount.toFixed(2)} on {format(new Date(LAST_DEPOSIT.createdAt), 'MMM d')}
-              </p>
-            )}
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#C9A84C' }}>

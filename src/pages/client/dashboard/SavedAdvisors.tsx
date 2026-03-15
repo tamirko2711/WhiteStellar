@@ -120,22 +120,74 @@ function SuggestionCard({ advisor }: { advisor: Advisor }) {
 
 export default function SavedAdvisors() {
   const { user } = useAuthStore()
-  const [savedIds, setSavedIds] = useState<Set<number>>(new Set())
-  const [removedIds, setRemovedIds] = useState<Set<number>>(new Set())
+  const [savedAdvisors, setSavedAdvisors] = useState<Advisor[]>([])
   const [sort, setSort] = useState<SortKey>('recent')
   const [toast, setToast] = useState({ msg: '', visible: false })
 
+  const isDevMode = user?.id?.startsWith('dev-')
+
   useEffect(() => {
     if (!user?.id) return
+
+    if (isDevMode) {
+      // Dev mode: use mock data
+      const mockIds = new Set([1, 2, 3]) // mock saved IDs
+      setSavedAdvisors(ADVISORS.filter(a => mockIds.has(a.id)))
+      return
+    }
+
     const fetchSaved = async () => {
-      const { data } = await supabase
+      const { data: savedRows } = await supabase
         .from('saved_advisors')
         .select('advisor_id')
         .eq('client_id', user.id)
-      if (data) setSavedIds(new Set(data.map((r: { advisor_id: number }) => r.advisor_id)))
+        .order('created_at', { ascending: false })
+      if (!savedRows || savedRows.length === 0) return
+
+      const ids = savedRows.map((r: { advisor_id: number }) => r.advisor_id)
+      const { data: advisorRows } = await supabase
+        .from('advisors')
+        .select('id, full_name, avatar, short_bio, status, rating, review_count, is_top_advisor, chat_price, audio_price, video_price, total_sessions')
+        .in('id', ids)
+      if (!advisorRows) return
+
+      // Preserve saved order
+      const byId = Object.fromEntries(advisorRows.map((a: any) => [a.id, a]))
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setSavedAdvisors(ids.map((id: number) => byId[id]).filter(Boolean).map((a: any): Advisor => ({
+        id: a.id,
+        userId: 0,
+        fullName: a.full_name ?? '',
+        shortBio: a.short_bio ?? '',
+        longBio: '',
+        avatar: a.avatar ?? `https://ui-avatars.com/api/?name=${encodeURIComponent(a.full_name ?? 'A')}&background=1E2D45&color=C9A84C`,
+        backgroundImage: '',
+        status: a.status ?? 'offline',
+        accountStatus: 'active',
+        isTopAdvisor: a.is_top_advisor ?? false,
+        isNew: !a.is_top_advisor,
+        languages: [],
+        categories: [],
+        specializations: [],
+        skillsAndMethods: [],
+        sessionTypes: [
+          a.chat_price != null ? 'chat' : null,
+          a.audio_price != null ? 'audio' : null,
+          a.video_price != null ? 'video' : null,
+        ].filter(Boolean) as Advisor['sessionTypes'],
+        pricing: { chat: a.chat_price, audio: a.audio_price, video: a.video_price },
+        rating: a.rating ?? 5.0,
+        reviewCount: a.review_count ?? 0,
+        totalSessions: a.total_sessions ?? 0,
+        yearsActive: 0,
+        responseTime: '—',
+        withdrawalMethod: 'paypal',
+        joinedAt: new Date().toISOString(),
+        reviews: [],
+      })))
     }
     fetchSaved().catch(console.error)
-  }, [user?.id])
+  }, [user?.id, isDevMode])
 
   function showToast(msg: string) {
     setToast({ msg, visible: true })
@@ -143,7 +195,7 @@ export default function SavedAdvisors() {
   }
 
   async function handleRemove(advisorId: number) {
-    setRemovedIds(prev => new Set([...prev, advisorId]))
+    setSavedAdvisors(prev => prev.filter(a => a.id !== advisorId))
     showToast('Removed from saved advisors')
     if (user?.id) {
       await supabase
@@ -154,14 +206,11 @@ export default function SavedAdvisors() {
     }
   }
 
-  // Base saved list (original order = recently added)
-  const baseSaved = ADVISORS.filter(
-    a => savedIds.has(a.id) && !removedIds.has(a.id)
-  )
-  const savedList = sortAdvisors(baseSaved, sort)
+  const savedList = sortAdvisors(savedAdvisors, sort)
+  const savedIdSet = new Set(savedAdvisors.map(a => a.id))
 
-  // Suggestions: advisors NOT in savedIds
-  const suggestions = ADVISORS.filter(a => !savedIds.has(a.id)).slice(0, 4)
+  // Suggestions: advisors NOT already saved (from mock data for now)
+  const suggestions = ADVISORS.filter(a => !savedIdSet.has(a.id)).slice(0, 4)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '28px' }}>
