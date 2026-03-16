@@ -4,6 +4,7 @@ import { format } from 'date-fns'
 import { CLIENTS } from '../../../data/advisors'
 import { useAuthStore } from '../../../store/authStore'
 import { supabase } from '../../../lib/supabase'
+import AvatarCropModal from '../../../components/modals/AvatarCropModal'
 import Toast from '../../../components/Toast'
 
 // ─── Constants ────────────────────────────────────────────────
@@ -159,7 +160,7 @@ function PreviewCard({
 export default function ProfileSettings() {
   const { user } = useAuthStore()
   const fileRef = useRef<HTMLInputElement>(null)
-
+  const [cropSrc, setCropSrc] = useState<string | null>(null)
 
   // Form state (pre-filled)
   const [avatarUrl, setAvatarUrl]       = useState(user?.avatar ?? CLIENT_DATA.avatar)
@@ -193,33 +194,21 @@ export default function ProfileSettings() {
     setTimeout(() => setToast(t => ({ ...t, visible: false })), 2500)
   }
 
-  // Resize the selected file to 200×200 and convert to data URL so it
-  // can be stored directly in profiles.avatar_url without needing a bucket.
-  // Also patches authStore immediately so the sidebar and navbar update right away.
+  // Open the crop modal with the selected file
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
+    e.target.value = ''
     const reader = new FileReader()
-    reader.onload = ev => {
-      const img = new Image()
-      img.onload = () => {
-        const canvas = document.createElement('canvas')
-        canvas.width = 200
-        canvas.height = 200
-        const ctx = canvas.getContext('2d')!
-        // Center-crop to square then scale to 200×200
-        const size = Math.min(img.width, img.height)
-        const sx = (img.width - size) / 2
-        const sy = (img.height - size) / 2
-        ctx.drawImage(img, sx, sy, size, size, 0, 0, 200, 200)
-        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
-        setAvatarUrl(dataUrl)
-        // Update authStore immediately so Navbar + sidebar reflect the photo right away
-        useAuthStore.setState(s => s.user ? { user: { ...s.user, avatar: dataUrl } } : {})
-      }
-      img.src = ev.target?.result as string
-    }
+    reader.onload = ev => { if (ev.target?.result) setCropSrc(ev.target.result as string) }
     reader.readAsDataURL(file)
+  }
+
+  // Called when the user confirms their crop — updates local state + authStore immediately
+  function handleCropConfirm(dataUrl: string) {
+    setAvatarUrl(dataUrl)
+    setCropSrc(null)
+    useAuthStore.setState(s => s.user ? { user: { ...s.user, avatar: dataUrl } } : {})
   }
 
   async function handleSave(e: React.FormEvent) {
@@ -477,6 +466,14 @@ export default function ProfileSettings() {
       `}</style>
 
       <Toast message={toast.msg} visible={toast.visible} />
+
+      {cropSrc && (
+        <AvatarCropModal
+          src={cropSrc}
+          onConfirm={handleCropConfirm}
+          onClose={() => setCropSrc(null)}
+        />
+      )}
     </form>
   )
 }
