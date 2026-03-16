@@ -195,6 +195,7 @@ export default function ProfileSettings() {
 
   // Resize the selected file to 200×200 and convert to data URL so it
   // can be stored directly in profiles.avatar_url without needing a bucket.
+  // Also patches authStore immediately so the sidebar and navbar update right away.
   function handlePhotoChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file) return
@@ -211,7 +212,10 @@ export default function ProfileSettings() {
         const sx = (img.width - size) / 2
         const sy = (img.height - size) / 2
         ctx.drawImage(img, sx, sy, size, size, 0, 0, 200, 200)
-        setAvatarUrl(canvas.toDataURL('image/jpeg', 0.85))
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85)
+        setAvatarUrl(dataUrl)
+        // Update authStore immediately so Navbar + sidebar reflect the photo right away
+        useAuthStore.setState(s => s.user ? { user: { ...s.user, avatar: dataUrl } } : {})
       }
       img.src = ev.target?.result as string
     }

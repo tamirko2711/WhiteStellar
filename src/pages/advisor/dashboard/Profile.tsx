@@ -888,7 +888,12 @@ export default function AdvisorProfile() {
       {cropSrc && (
         <AvatarCropModal
           src={cropSrc}
-          onConfirm={dataUrl => { setAvatarSrc(dataUrl); setCropSrc(null) }}
+          onConfirm={dataUrl => {
+            setAvatarSrc(dataUrl)
+            setCropSrc(null)
+            // Update authStore immediately so Navbar + sidebar reflect the photo right away
+            useAuthStore.setState(s => s.user ? { user: { ...s.user, avatar: dataUrl } } : {})
+          }}
           onClose={() => setCropSrc(null)}
         />
       )}
