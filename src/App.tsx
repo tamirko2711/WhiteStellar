@@ -63,6 +63,7 @@ import ProtectedRoute from './components/ProtectedRoute'
 import { ScrollToTop } from './components/ScrollToTop'
 import { useAuthStore } from './store/authStore'
 import { useNavigate } from 'react-router-dom'
+import { ComingSoonPage } from './pages/ComingSoonPage'
 
 // ─── Dev toggle ───────────────────────────────────────────────
 
@@ -180,10 +181,22 @@ function DevToggle() {
 
 export default function App() {
   const { initialize } = useAuthStore()
+  const [isUnlocked, setIsUnlocked] = useState<boolean>(() => {
+    return localStorage.getItem('ws_access_granted') === 'true'
+  })
 
   useEffect(() => {
     initialize()
   }, [initialize])
+
+  function handleUnlock() {
+    localStorage.setItem('ws_access_granted', 'true')
+    setIsUnlocked(true)
+  }
+
+  if (!isUnlocked) {
+    return <ComingSoonPage onUnlock={handleUnlock} />
+  }
 
   return (
     <BrowserRouter>
