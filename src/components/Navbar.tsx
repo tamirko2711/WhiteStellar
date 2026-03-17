@@ -9,7 +9,7 @@ import {
 import { NavLink, useNavigate } from 'react-router-dom'
 import { formatDistanceToNow } from 'date-fns'
 import {
-  Search, Wallet, Bell, Menu, X, User, MessageCircle,
+  Search, Wallet, Bell, Menu, X, User, MessageCircle, MessageSquare,
   Heart, Settings, LogOut, Star, Zap, ChevronDown,
   Eye, Layers, Moon, Sparkles, TrendingUp,
 } from 'lucide-react'
@@ -29,6 +29,7 @@ interface DbNotification {
   message: string
   is_read: boolean
   created_at: string
+  metadata?: { advisor_id?: number; advisor_name?: string; review_id?: number; [key: string]: unknown }
 }
 
 // ─── helpers ──────────────────────────────────────────────────
@@ -36,6 +37,7 @@ interface DbNotification {
 function notifIcon(type: NotificationType) {
   if (type === 'new_review') return <Star size={15} />
   if (type === 'advisor_online') return <Zap size={15} />
+  if (type === 'advisor_review_response') return <MessageSquare size={15} />
   return <MessageCircle size={15} />
 }
 
@@ -114,6 +116,7 @@ interface NotifDropdownProps {
 
 function NotifDropdown({ notifications, onClose, onMarkAllRead }: NotifDropdownProps) {
   const ref = useRef<HTMLDivElement>(null)
+  const navigate = useNavigate()
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -122,6 +125,13 @@ function NotifDropdown({ notifications, onClose, onMarkAllRead }: NotifDropdownP
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
   }, [onClose])
+
+  function handleNotifClick(n: DbNotification) {
+    if (n.type === 'advisor_review_response' && n.metadata?.advisor_id) {
+      navigate(`/advisor/${n.metadata.advisor_id}`)
+      onClose()
+    }
+  }
 
   return (
     <div
@@ -159,8 +169,9 @@ function NotifDropdown({ notifications, onClose, onMarkAllRead }: NotifDropdownP
               style={{
                 background: n.is_read ? 'transparent' : 'rgba(201,168,76,0.04)',
                 borderLeft: n.is_read ? '3px solid transparent' : '3px solid rgba(201,168,76,0.5)',
-                cursor: 'pointer',
+                cursor: n.type === 'advisor_review_response' ? 'pointer' : 'default',
               }}
+              onClick={() => handleNotifClick(n)}
               onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = 'rgba(30,45,69,0.5)' }}
               onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = n.is_read ? 'transparent' : 'rgba(201,168,76,0.04)' }}
             >
@@ -173,6 +184,11 @@ function NotifDropdown({ notifications, onClose, onMarkAllRead }: NotifDropdownP
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-semibold leading-snug" style={{ color: '#F0F4FF' }}>{n.title}</p>
                 <p className="mt-0.5 text-xs leading-relaxed" style={{ color: '#8B9BB4' }}>{n.message}</p>
+                {n.type === 'advisor_review_response' && n.metadata?.advisor_id && (
+                  <p className="mt-1 text-[11px] font-medium" style={{ color: '#2DD4BF' }}>
+                    View Profile →
+                  </p>
+                )}
                 <p className="mt-1 text-[11px]" style={{ color: '#4B5563' }}>
                   {formatDistanceToNow(new Date(n.created_at), { addSuffix: true })}
                 </p>
@@ -203,13 +219,15 @@ function ProfileDropdown({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener('mousedown', handler)
   }, [onClose])
 
+  const isClientUser = !userType || userType === 'client'
+
   const MENU_ITEMS = [
-    { icon: <User size={15} />,          label: 'My Profile',        to: '/dashboard/profile'  },
-    { icon: <Wallet size={15} />,        label: 'Wallet & Payments', to: '/dashboard/wallet'   },
-    { icon: <MessageCircle size={15} />, label: 'My Sessions',       to: '/dashboard/sessions' },
-    { icon: <Heart size={15} />,         label: 'Saved Advisors',    to: '/dashboard/saved'    },
-    { icon: <Settings size={15} />,      label: 'Account Settings',  to: '/dashboard/account'  },
-  ] as const
+    { icon: <User size={15} />,          label: 'My Profile',        to: '/dashboard/profile',  clientOnly: false },
+    { icon: <Wallet size={15} />,        label: 'Wallet & Payments', to: '/dashboard/wallet',   clientOnly: true  },
+    { icon: <MessageCircle size={15} />, label: 'My Sessions',       to: '/dashboard/sessions', clientOnly: false },
+    { icon: <Heart size={15} />,         label: 'Saved Advisors',    to: '/dashboard/saved',    clientOnly: false },
+    { icon: <Settings size={15} />,      label: 'Account Settings',  to: '/dashboard/account',  clientOnly: false },
+  ]
 
   function go(to: string) {
     onClose()
@@ -251,7 +269,7 @@ function ProfileDropdown({ onClose }: { onClose: () => void }) {
         </div>
       </div>
       <div className="py-1">
-        {MENU_ITEMS.map(item => (
+        {MENU_ITEMS.filter(item => !item.clientOnly || isClientUser).map(item => (
           <button
             key={item.label}
             onClick={() => go(item.to)}
@@ -412,7 +430,7 @@ function CategoriesDropdown({ onClose }: { onClose: () => void }) {
 // ─── Mobile Drawer ─────────────────────────────────────────────
 
 function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { isLoggedIn, user, logout } = useAuthStore()
+  const { isLoggedIn, user, userType, logout } = useAuthStore()
   const { openAuthModal } = useModalStore()
   const navigate = useNavigate()
   const [advisorsOpen, setAdvisorsOpen] = useState(false)
@@ -545,6 +563,62 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
           >
             Articles
           </button>
+
+          {/* My Account — client links */}
+          {isLoggedIn && userType === 'client' && (
+            <>
+              <div style={{ height: '1px', background: '#1E2D45', margin: '6px 0' }} />
+              <p style={{ color: '#4B5563', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', padding: '2px 12px 4px', margin: 0 }}>
+                My Account
+              </p>
+              {[
+                { label: 'Dashboard', to: '/dashboard' },
+                { label: 'My Sessions', to: '/dashboard/sessions' },
+                { label: 'Wallet & Payments', to: '/dashboard/wallet' },
+                { label: 'Saved Advisors', to: '/dashboard/saved' },
+                { label: 'My Profile', to: '/dashboard/profile' },
+              ].map(item => (
+                <button
+                  key={item.to}
+                  onClick={() => go(item.to)}
+                  className="flex items-center rounded-lg px-3 py-2.5 text-sm font-medium"
+                  style={{ color: '#8B9BB4', background: 'transparent', border: 'none', cursor: 'pointer', width: '100%', textAlign: 'left' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#F0F4FF' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#8B9BB4' }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </>
+          )}
+
+          {/* My Dashboard — advisor links */}
+          {isLoggedIn && userType === 'advisor' && (
+            <>
+              <div style={{ height: '1px', background: '#1E2D45', margin: '6px 0' }} />
+              <p style={{ color: '#4B5563', fontSize: '10px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', padding: '2px 12px 4px', margin: 0 }}>
+                Advisor Panel
+              </p>
+              {[
+                { label: 'Overview', to: '/advisor/dashboard' },
+                { label: 'Sessions', to: '/advisor/dashboard/sessions' },
+                { label: 'My Clients', to: '/advisor/dashboard/clients' },
+                { label: 'Earnings', to: '/advisor/dashboard/earnings' },
+                { label: 'Reviews', to: '/advisor/dashboard/reviews' },
+              ].map(item => (
+                <button
+                  key={item.to}
+                  onClick={() => go(item.to)}
+                  className="flex items-center rounded-lg px-3 py-2.5 text-sm font-medium"
+                  style={{ color: '#8B9BB4', background: 'transparent', border: 'none', cursor: 'pointer', width: '100%', textAlign: 'left' }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.color = '#F0F4FF' }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.color = '#8B9BB4' }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </>
+          )}
         </nav>
 
         {/* Auth section */}
@@ -563,7 +637,12 @@ function MobileDrawer({ open, onClose }: { open: boolean; onClose: () => void })
                 />
                 <div>
                   <p className="text-sm font-semibold" style={{ color: '#F0F4FF' }}>{user.fullName}</p>
-                  <p className="text-xs" style={{ color: '#C9A84C' }}>${user.walletBalance.toFixed(2)} balance</p>
+                  {userType === 'client' && (
+                    <p className="text-xs" style={{ color: '#C9A84C' }}>${user.walletBalance.toFixed(2)} balance</p>
+                  )}
+                  {userType === 'advisor' && (
+                    <p className="text-xs" style={{ color: '#C9A84C' }}>Advisor</p>
+                  )}
                 </div>
               </div>
               <button
@@ -654,8 +733,9 @@ function NavDropdownItem({
 // ─── Main Navbar ───────────────────────────────────────────────
 
 export default function Navbar() {
-  const { isLoggedIn, user } = useAuthStore()
+  const { isLoggedIn, user, userType } = useAuthStore()
   const { openAuthModal } = useModalStore()
+  const isClient = !userType || userType === 'client'
 
   const [scrolled, setScrolled] = useState(false)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -818,18 +898,20 @@ export default function Navbar() {
 
             {isLoggedIn && user ? (
               <>
-                <NavLink
-                  to="/dashboard/wallet"
-                  className="hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors md:flex"
-                  style={{
-                    background: '#131929',
-                    border: '1px solid rgba(201,168,76,0.4)',
-                    color: '#C9A84C',
-                  }}
-                >
-                  <Wallet size={14} />
-                  ${user.walletBalance.toFixed(2)}
-                </NavLink>
+                {isClient && (
+                  <NavLink
+                    to="/dashboard/wallet"
+                    className="hidden items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-semibold transition-colors md:flex"
+                    style={{
+                      background: '#131929',
+                      border: '1px solid rgba(201,168,76,0.4)',
+                      color: '#C9A84C',
+                    }}
+                  >
+                    <Wallet size={14} />
+                    ${user.walletBalance.toFixed(2)}
+                  </NavLink>
+                )}
 
                 <div className="relative hidden md:block">
                   <button
@@ -904,15 +986,31 @@ export default function Navbar() {
               </div>
             )}
 
-            {/* Mobile hamburger */}
-            <button
-              aria-label="Open menu"
-              className="flex h-9 w-9 items-center justify-center rounded-full transition-colors md:hidden"
-              style={{ color: '#8B9BB4' }}
-              onClick={() => setDrawerOpen(true)}
-            >
-              <Menu size={22} />
-            </button>
+            {/* Mobile: avatar (logged in) or hamburger icon */}
+            {isLoggedIn && user ? (
+              <button
+                aria-label="Open menu"
+                className="overflow-hidden rounded-full md:hidden"
+                style={{ outline: '2px solid #C9A84C', outlineOffset: '2px', flexShrink: 0 }}
+                onClick={() => setDrawerOpen(true)}
+              >
+                <img
+                  src={user.avatar}
+                  alt={user.fullName}
+                  className="rounded-full object-cover"
+                  style={{ width: '32px', height: '32px', display: 'block' }}
+                />
+              </button>
+            ) : (
+              <button
+                aria-label="Open menu"
+                className="flex h-9 w-9 items-center justify-center rounded-full transition-colors md:hidden"
+                style={{ color: '#8B9BB4' }}
+                onClick={() => setDrawerOpen(true)}
+              >
+                <Menu size={22} />
+              </button>
+            )}
           </div>
         </div>
       </header>

@@ -9,6 +9,8 @@ import { Star, MessageSquare, Mic, Video, Wallet, Home, Clock } from 'lucide-rea
 import { useSessionStore } from '../../store/sessionStore'
 import { useAuthStore } from '../../store/authStore'
 import Toast from '../../components/Toast'
+import { submitReview } from '../../lib/api/reviews'
+import { markSessionReviewed } from '../../lib/api/sessions'
 
 // ─── Star rating ──────────────────────────────────────────────
 
@@ -47,7 +49,7 @@ export default function SessionEndPage() {
     sessionType, advisorId, advisorName, advisorAvatar,
     clientName, clientAvatar,
     elapsedSeconds, totalCost, walletBalance,
-    initialFreeSeconds,
+    initialFreeSeconds, supabaseSessionId,
     resetSession,
   } = useSessionStore()
 
@@ -55,6 +57,7 @@ export default function SessionEndPage() {
 
   const [rating, setRating] = useState(0)
   const [review, setReview] = useState('')
+  const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState({ msg: '', visible: false })
 
   function showToast(msg: string) {
@@ -170,9 +173,36 @@ export default function SessionEndPage() {
     )
   }
 
-  function handleSubmitReview() {
-    showToast('Thank you for your review! ✨')
-    setTimeout(() => { resetSession(); navigate('/') }, 1500)
+  async function handleSubmitReview() {
+    if (rating === 0 || submitting) return
+    if (!user || !advisorId) {
+      // No real session — just navigate
+      showToast('Thank you for your review! ✨')
+      setTimeout(() => { resetSession(); navigate('/') }, 1500)
+      return
+    }
+
+    setSubmitting(true)
+    try {
+      await submitReview({
+        advisorId,
+        clientId: user.id,
+        clientName: user.fullName,
+        clientAvatar: user.avatar,
+        rating,
+        comment: review,
+        sessionType: sessionType ?? 'chat',
+      })
+      if (supabaseSessionId) {
+        await markSessionReviewed(supabaseSessionId)
+      }
+      showToast('Thank you for your review! ✨')
+      setTimeout(() => { resetSession(); navigate('/') }, 1500)
+    } catch (err) {
+      console.error('[SessionEnd] Failed to submit review:', err)
+      showToast('Failed to submit review. Please try again.')
+      setSubmitting(false)
+    }
   }
 
   function handleSkip() {
@@ -314,17 +344,17 @@ export default function SessionEndPage() {
             <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
               <button
                 onClick={handleSubmitReview}
-                disabled={rating === 0}
+                disabled={rating === 0 || submitting}
                 style={{
                   flex: 1, padding: '13px',
-                  background: rating > 0 ? 'linear-gradient(135deg,#C9A84C,#E8C96D)' : '#1A2540',
+                  background: rating > 0 && !submitting ? 'linear-gradient(135deg,#C9A84C,#E8C96D)' : '#1A2540',
                   border: 'none', borderRadius: '12px',
-                  color: rating > 0 ? '#0B0F1A' : '#4B5563',
+                  color: rating > 0 && !submitting ? '#0B0F1A' : '#4B5563',
                   fontWeight: 700, fontSize: '14px',
-                  cursor: rating > 0 ? 'pointer' : 'default', transition: 'all 0.2s',
+                  cursor: rating > 0 && !submitting ? 'pointer' : 'default', transition: 'all 0.2s',
                 }}
               >
-                Submit Review
+                {submitting ? 'Submitting…' : 'Submit Review'}
               </button>
             </div>
             <div style={{ textAlign: 'center', marginTop: '12px' }}>

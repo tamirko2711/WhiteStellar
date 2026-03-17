@@ -1,5 +1,5 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import ClientLayout from './layouts/ClientLayout'
 import AdvisorLayout from './layouts/AdvisorLayout'
 import ClientDashboardLayout from './layouts/ClientDashboardLayout'
@@ -69,6 +69,7 @@ import { useNavigate } from 'react-router-dom'
 function DevToggle() {
   const { userType } = useAuthStore()
   const navigate = useNavigate()
+  const [collapsed, setCollapsed] = useState(false)
 
   function switchTo(type: 'client' | 'advisor' | 'superadmin') {
     const users = {
@@ -114,6 +115,24 @@ function DevToggle() {
     )
   }
 
+  if (collapsed) {
+    return (
+      <button
+        onClick={() => setCollapsed(false)}
+        title="Show Dev Mode"
+        style={{
+          position: 'fixed', bottom: '20px', right: '20px', zIndex: 1000,
+          background: 'rgba(11,15,26,0.9)', border: '1px solid #1E2D45',
+          borderRadius: '8px', padding: '6px 10px',
+          fontSize: '10px', color: '#4B5563', fontWeight: 600,
+          textTransform: 'uppercase', letterSpacing: '0.08em', cursor: 'pointer',
+        }}
+      >
+        DEV
+      </button>
+    )
+  }
+
   return (
     <div style={{
       position: 'fixed', bottom: '20px', right: '20px',
@@ -122,10 +141,21 @@ function DevToggle() {
       <div style={{
         background: 'rgba(11,15,26,0.9)', border: '1px solid #1E2D45',
         borderRadius: '10px', padding: '6px 10px',
-        fontSize: '10px', color: '#4B5563', textAlign: 'center',
-        fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em',
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px',
       }}>
-        DEV MODE
+        <span style={{ fontSize: '10px', color: '#4B5563', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+          DEV MODE
+        </span>
+        <button
+          onClick={() => setCollapsed(true)}
+          title="Hide Dev Mode"
+          style={{
+            background: 'none', border: 'none', color: '#4B5563',
+            cursor: 'pointer', fontSize: '12px', lineHeight: 1, padding: '0 2px',
+          }}
+        >
+          ✕
+        </button>
       </div>
       {btn('→ Admin View', 'superadmin')}
       {btn('→ Client View', 'client')}

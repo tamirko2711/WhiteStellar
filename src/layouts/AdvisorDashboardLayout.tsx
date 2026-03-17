@@ -247,6 +247,27 @@ export default function AdvisorDashboardLayout() {
   const incomingSessionIdRef = useRef<number | null>(null)
   useEffect(() => { incomingSessionIdRef.current = incomingSession?.id ?? null }, [incomingSession])
 
+  // ── Incoming-call ringtone ─────────────────────────────────
+  const ringAudioRef = useRef<HTMLAudioElement | null>(null)
+  useEffect(() => {
+    if (incomingSession) {
+      if (!ringAudioRef.current) {
+        ringAudioRef.current = new Audio('/sounds/incoming-call.mp3')
+        ringAudioRef.current.loop = true
+      }
+      ringAudioRef.current.currentTime = 0
+      ringAudioRef.current.play().catch(() => {})
+    } else {
+      if (ringAudioRef.current) {
+        ringAudioRef.current.pause()
+        ringAudioRef.current.currentTime = 0
+      }
+    }
+    return () => {
+      ringAudioRef.current?.pause()
+    }
+  }, [incomingSession?.id])
+
   useEffect(() => {
     if (!incomingSession) return
     const id = setInterval(() => {

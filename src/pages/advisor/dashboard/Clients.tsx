@@ -12,21 +12,32 @@ import {
 } from 'lucide-react'
 import { CLIENTS, getSessionsByAdvisor } from '../../../data/advisors'
 import { useAuthStore } from '../../../store/authStore'
+import { supabase } from '../../../lib/supabase'
 
 // ─── Types ────────────────────────────────────────────────────
 
 type FilterPill = 'all' | 'active' | 'blocked'
 
+interface SessionHistory {
+  id: number | string
+  type: string
+  startedAt: string
+  durationMinutes: number
+  status: string
+  totalCost: number
+}
+
 interface ClientMeta {
-  clientId: number
+  clientId: number | string
   fullName: string
   avatar: string
   email: string
   totalSessions: number
-  totalSpent: number   // advisor's cut
+  totalSpent: number   // advisor's cut (70%)
   lastSession: string
   blocked: boolean
   note: string
+  sessionHistory: SessionHistory[]
 }
 
 // ─── Build client CRM rows from advisor 1 sessions ────────────
@@ -49,6 +60,7 @@ function buildClients(): ClientMeta[] {
         lastSession: s.startedAt,
         blocked: false,
         note: '',
+        sessionHistory: [],
       }
     }
     map[s.clientId].totalSessions++
@@ -56,6 +68,14 @@ function buildClients(): ClientMeta[] {
     if (s.startedAt > map[s.clientId].lastSession) {
       map[s.clientId].lastSession = s.startedAt
     }
+    map[s.clientId].sessionHistory.push({
+      id: s.id,
+      type: s.type,
+      startedAt: s.startedAt,
+      durationMinutes: s.durationMinutes,
+      status: s.status,
+      totalCost: s.totalCost,
+    })
   })
 
   // Add dummy extra client for variety
@@ -72,6 +92,7 @@ function buildClients(): ClientMeta[] {
         lastSession: '2024-10-28T18:35:00Z',
         blocked: false,
         note: 'Prefers audio sessions. Interested in career guidance.',
+        sessionHistory: [],
       }
     }
   }
@@ -96,7 +117,7 @@ function TypeBadge({ type }: { type: string }) {
       border: '1px solid rgba(201,168,76,0.2)',
       borderRadius: '4px', padding: '1px 6px', fontSize: '11px',
     }}>
-      {icons[type]} {type}
+      {icons[type] ?? null} {type}
     </span>
   )
 }
@@ -300,7 +321,7 @@ function NoteModal({
 // ─── Client Row ───────────────────────────────────────────────
 
 function ClientRow({
-  client, expanded, onToggle, onNote, onBlock, onUnblock, sessions,
+  client, expanded, onToggle, onNote, onBlock, onUnblock,
 }: {
   client: ClientMeta
   expanded: boolean
@@ -308,9 +329,8 @@ function ClientRow({
   onNote: () => void
   onBlock: () => void
   onUnblock: () => void
-  sessions: ReturnType<typeof getSessionsByAdvisor>
 }) {
-  const clientSessions = sessions.filter(s => s.clientId === client.clientId)
+  const clientSessions = client.sessionHistory
 
   return (
     <div style={{
@@ -362,7 +382,7 @@ function ClientRow({
               </span>
             )}
           </div>
-          <span style={{ color: '#8B9BB4', fontSize: '12px' }}>{client.email}</span>
+          <span style={{ color: '#8B9BB4', fontSize: '12px' }}>{client.email || '—'}</span>
         </div>
 
         {/* Stats — hidden on mobile */}
@@ -413,7 +433,7 @@ function ClientRow({
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
               {clientSessions.map(s => (
-                <div key={s.id} style={{
+                <div key={String(s.id)} style={{
                   display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                   background: '#0F1828', borderRadius: '8px', padding: '10px 14px',
                 }}>
@@ -461,32 +481,73 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
 export default function AdvisorClients() {
   const { user } = useAuthStore()
   const isRealUser = !!(user && !user.id.startsWith('dev-'))
-  const [clients, setClients] = useState<ClientMeta[]>(INITIAL_CLIENTS)
+  const [clients, setClients] = useState<ClientMeta[]>(isRealUser ? [] : INITIAL_CLIENTS)
   const [filter, setFilter] = useState<FilterPill>('all')
   const [search, setSearch] = useState('')
-  const [expandedId, setExpandedId] = useState<number | null>(null)
+  const [expandedId, setExpandedId] = useState<number | string | null>(null)
   const [blockTarget, setBlockTarget] = useState<ClientMeta | null>(null)
   const [noteTarget, setNoteTarget] = useState<ClientMeta | null>(null)
 
-  const sessions = getSessionsByAdvisor(1)
+  useEffect(() => {
+    if (!isRealUser || !user) return
+    async function load() {
+      const { data: adv } = await supabase
+        .from('advisors')
+        .select('id')
+        .eq('user_id', user!.id)
+        .single()
+      if (!adv) return
 
-  if (isRealUser) {
-    return (
-      <div style={{ maxWidth: '900px' }}>
-        <div style={{ marginBottom: '28px' }}>
-          <h1 style={{ color: '#F0F4FF', fontWeight: 700, fontSize: '22px', margin: '0 0 4px' }}>My Clients</h1>
-          <p style={{ color: '#8B9BB4', fontSize: '14px', margin: 0 }}>View and manage all clients you've had sessions with.</p>
-        </div>
-        <div style={{ textAlign: 'center', padding: '80px 20px' }}>
-          <User size={44} style={{ color: '#1E2D45', margin: '0 auto 14px', display: 'block' }} />
-          <p style={{ color: '#8B9BB4', fontSize: '16px', fontWeight: 600, margin: '0 0 8px' }}>No clients yet</p>
-          <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>
-            Clients will appear here after you complete sessions with them.
-          </p>
-        </div>
-      </div>
-    )
-  }
+      const { data: rows } = await supabase
+        .from('sessions')
+        .select('id, client_id, client_name, type, status, duration_minutes, total_cost, started_at')
+        .eq('advisor_id', adv.id)
+        .eq('status', 'completed')
+        .order('started_at', { ascending: false })
+
+      if (!rows) return
+
+      const map: Record<string, ClientMeta> = {}
+      rows.forEach((s: any) => {
+        const cid = String(s.client_id)
+        const name = s.client_name || 'Client'
+        const avatarUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=1E2D45&color=C9A84C&size=96`
+        const cost = s.total_cost ?? 0
+
+        if (!map[cid]) {
+          map[cid] = {
+            clientId: cid,
+            fullName: name,
+            avatar: avatarUrl,
+            email: '',
+            totalSessions: 0,
+            totalSpent: 0,
+            lastSession: s.started_at,
+            blocked: false,
+            note: '',
+            sessionHistory: [],
+          }
+        }
+
+        map[cid].totalSessions++
+        map[cid].totalSpent += cost * 0.7
+        if (s.started_at > map[cid].lastSession) {
+          map[cid].lastSession = s.started_at
+        }
+        map[cid].sessionHistory.push({
+          id: s.id,
+          type: s.type ?? 'chat',
+          startedAt: s.started_at,
+          durationMinutes: s.duration_minutes ?? 0,
+          status: s.status,
+          totalCost: cost,
+        })
+      })
+
+      setClients(Object.values(map))
+    }
+    load()
+  }, [isRealUser, user?.id])
 
   const filtered = clients
     .filter(c => {
@@ -500,20 +561,20 @@ export default function AdvisorClients() {
       return c.fullName.toLowerCase().includes(q) || c.email.toLowerCase().includes(q)
     })
 
-  function toggleExpand(id: number) {
+  function toggleExpand(id: number | string) {
     setExpandedId(prev => prev === id ? null : id)
   }
 
-  function handleBlock(id: number) {
+  function handleBlock(id: number | string) {
     setClients(prev => prev.map(c => c.clientId === id ? { ...c, blocked: true } : c))
     setBlockTarget(null)
   }
 
-  function handleUnblock(id: number) {
+  function handleUnblock(id: number | string) {
     setClients(prev => prev.map(c => c.clientId === id ? { ...c, blocked: false } : c))
   }
 
-  function handleSaveNote(id: number, note: string) {
+  function handleSaveNote(id: number | string, note: string) {
     setClients(prev => prev.map(c => c.clientId === id ? { ...c, note } : c))
   }
 
@@ -542,7 +603,7 @@ export default function AdvisorClients() {
           <input
             value={search}
             onChange={e => setSearch(e.target.value)}
-            placeholder="Search by name or email…"
+            placeholder="Search by name…"
             style={{
               width: '100%', background: '#0F1828', border: '1px solid #1E2D45',
               borderRadius: '10px', padding: '10px 12px 10px 36px',
@@ -576,19 +637,22 @@ export default function AdvisorClients() {
       {filtered.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: '#4B5563' }}>
           <User size={40} strokeWidth={1} style={{ marginBottom: '12px', opacity: 0.4 }} />
-          <p style={{ margin: 0, fontSize: '15px' }}>No clients found.</p>
+          <p style={{ margin: 0, fontSize: '15px' }}>
+            {clients.length === 0 && isRealUser
+              ? 'Clients will appear here after you complete sessions with them.'
+              : 'No clients found.'}
+          </p>
         </div>
       ) : (
         filtered.map(client => (
           <ClientRow
-            key={client.clientId}
+            key={String(client.clientId)}
             client={client}
             expanded={expandedId === client.clientId}
             onToggle={() => toggleExpand(client.clientId)}
             onNote={() => setNoteTarget(client)}
             onBlock={() => setBlockTarget(client)}
             onUnblock={() => handleUnblock(client.clientId)}
-            sessions={sessions}
           />
         ))
       )}

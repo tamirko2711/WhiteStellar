@@ -107,11 +107,17 @@ export default function AdvisorOverview() {
   const [advisorRecord, setAdvisorRecord] = useState<AdvisorRecord | null>(null)
   useEffect(() => {
     if (!isRealUser) return
-    getAdvisorByUserId(user!.id).then(setAdvisorRecord)
+    const fetch = () => getAdvisorByUserId(user!.id).then(setAdvisorRecord)
+    fetch()
+    // Re-fetch when advisor switches back to this tab (picks up updated rating/review_count)
+    const onVisibility = () => { if (!document.hidden) fetch() }
+    document.addEventListener('visibilitychange', onVisibility)
+    return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [isRealUser, user?.id])
 
   // ── Earnings from completed sessions ──
   const [earnings, setEarnings] = useState({ today: 0, thisMonth: 0 })
+  const [earningsChartData, setEarningsChartData] = useState<{ day: string; revenue: number }[]>([])
   useEffect(() => {
     if (!isRealUser || !advisorRecord) return
     supabase
@@ -121,8 +127,9 @@ export default function AdvisorOverview() {
       .eq('status', 'completed')
       .then(({ data }) => {
         if (!data) return
-        const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0)
-        const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0)
+        const now2 = new Date()
+        const todayStart = new Date(now2); todayStart.setHours(0, 0, 0, 0)
+        const monthStart = new Date(now2.getFullYear(), now2.getMonth(), 1)
         let today = 0, thisMonth = 0
         data.forEach(s => {
           const amt = (s.total_cost ?? 0) * 0.7
@@ -131,9 +138,45 @@ export default function AdvisorOverview() {
           if (d >= monthStart) thisMonth += amt
         })
         setEarnings({ today: +today.toFixed(2), thisMonth: +thisMonth.toFixed(2) })
+        // Build daily chart data for current month
+        const daysInMonth = new Date(now2.getFullYear(), now2.getMonth() + 1, 0).getDate()
+        const dailyMap: Record<number, number> = {}
+        data.forEach(s => {
+          const d = new Date(s.started_at)
+          if (d.getFullYear() === now2.getFullYear() && d.getMonth() === now2.getMonth()) {
+            const day = d.getDate()
+            dailyMap[day] = (dailyMap[day] ?? 0) + (s.total_cost ?? 0) * 0.7
+          }
+        })
+        setEarningsChartData(
+          Array.from({ length: daysInMonth }, (_, i) => ({
+            day: String(i + 1),
+            revenue: +(dailyMap[i + 1] ?? 0).toFixed(2),
+          }))
+        )
       })
   }, [isRealUser, advisorRecord?.id])
 
+
+  // ── Recent completed sessions ──
+  const [recentSessions, setRecentSessions] = useState<Array<{
+    id: number
+    client_name: string
+    type: string
+    total_cost: number | null
+    started_at: string
+  }>>([])
+  useEffect(() => {
+    if (!isRealUser || !advisorRecord) return
+    supabase
+      .from('sessions')
+      .select('id, client_name, type, total_cost, started_at')
+      .eq('advisor_id', advisorRecord.id)
+      .eq('status', 'completed')
+      .order('started_at', { ascending: false })
+      .limit(3)
+      .then(({ data }) => setRecentSessions(data ?? []))
+  }, [isRealUser, advisorRecord?.id])
 
   // ── Live sessions (real Supabase) ──
   const [liveSessions, setLiveSessions] = useState<LiveSession[]>([])
@@ -584,10 +627,52 @@ export default function AdvisorOverview() {
           </Link>
         </div>
         {isRealUser ? (
-          <div style={{ textAlign: 'center', padding: '32px 0' }}>
-            <MessageCircle size={36} style={{ color: '#1E2D45', margin: '0 auto 10px', display: 'block' }} />
-            <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>No sessions yet. Start a live session to connect with clients.</p>
-          </div>
+          recentSessions.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '32px 0' }}>
+              <MessageCircle size={36} style={{ color: '#1E2D45', margin: '0 auto 10px', display: 'block' }} />
+              <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>No sessions yet. Start a live session to connect with clients.</p>
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {recentSessions.map(session => {
+                const typeStyle = TYPE_COLORS[session.type] ?? TYPE_COLORS.chat
+                const net = +((session.total_cost ?? 0) * 0.7).toFixed(2)
+                const initials = (session.client_name ?? '?')[0].toUpperCase()
+                return (
+                  <div key={session.id} style={{
+                    display: 'flex', alignItems: 'center', gap: '14px',
+                    background: '#131929', border: '1px solid #1E2D45', borderRadius: '12px',
+                    padding: '14px 18px', flexWrap: 'wrap',
+                  }}>
+                    <div style={{
+                      width: '36px', height: '36px', borderRadius: '50%', flexShrink: 0,
+                      background: 'linear-gradient(135deg,#1E2D45,#0B0F1A)',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      <span style={{ color: '#C9A84C', fontWeight: 700, fontSize: '14px' }}>{initials}</span>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <p style={{ fontWeight: 600, color: '#F0F4FF', fontSize: '13px', margin: '0 0 2px' }}>{session.client_name}</p>
+                      <span style={{
+                        display: 'inline-flex', alignItems: 'center', gap: '4px',
+                        background: typeStyle.bg, color: typeStyle.color,
+                        borderRadius: '20px', padding: '1px 8px', fontSize: '11px', fontWeight: 600,
+                      }}>
+                        {session.type === 'video' ? <Video size={10} /> : session.type === 'audio' ? <Mic size={10} /> : <MessageCircle size={10} />}
+                        {session.type.charAt(0).toUpperCase() + session.type.slice(1)}
+                      </span>
+                    </div>
+                    <p style={{ color: '#4B5563', fontSize: '12px', flexShrink: 0 }}>
+                      {format(new Date(session.started_at), 'MMM d, yyyy')}
+                    </p>
+                    <p style={{ color: '#C9A84C', fontWeight: 700, fontSize: '14px', flexShrink: 0, margin: 0 }}>
+                      +${net}
+                    </p>
+                  </div>
+                )
+              })}
+            </div>
+          )
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {ADV_SESSIONS.slice(0, 5).map(session => {
@@ -639,14 +724,17 @@ export default function AdvisorOverview() {
             {isRealUser ? `$${earnings.thisMonth.toFixed(2)}` : '$2,847.30'}
           </span>
         </div>
-        {isRealUser ? (
+        {isRealUser && earningsChartData.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '24px 0' }}>
             <DollarSign size={36} style={{ color: '#1E2D45', margin: '0 auto 10px', display: 'block' }} />
             <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>Earnings will appear here once you complete sessions.</p>
           </div>
         ) : (
           <ResponsiveContainer width="100%" height={140}>
-            <AreaChart data={REVENUE_GRAPH_DATA} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+            <AreaChart
+              data={isRealUser ? earningsChartData : REVENUE_GRAPH_DATA}
+              margin={{ top: 4, right: 0, left: 0, bottom: 0 }}
+            >
               <defs>
                 <linearGradient id="goldGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#C9A84C" stopOpacity={0.25} />
@@ -654,15 +742,16 @@ export default function AdvisorOverview() {
                 </linearGradient>
               </defs>
               <XAxis
-                dataKey="month"
+                dataKey={isRealUser ? 'day' : 'month'}
                 axisLine={false} tickLine={false}
                 tick={{ fill: '#4B5563', fontSize: 11 }}
+                interval={isRealUser ? 4 : 0}
               />
               <Tooltip
                 contentStyle={{ background: '#131929', border: '1px solid #1E2D45', borderRadius: '8px', fontSize: '12px' }}
                 labelStyle={{ color: '#F0F4FF' }}
                 itemStyle={{ color: '#C9A84C' }}
-                formatter={(v: number | undefined) => [`$${(v ?? 0).toLocaleString()}`, 'Revenue'] as [string, string]}
+                formatter={(v: number | undefined) => [`$${(v ?? 0).toLocaleString()}`, 'Earnings'] as [string, string]}
               />
               <Area
                 type="monotone"

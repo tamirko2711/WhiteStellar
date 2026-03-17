@@ -3,13 +3,14 @@
 // src/pages/advisor/dashboard/Earnings.tsx
 // ============================================================
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
 import { TrendingUp, DollarSign, Clock, Star, CreditCard, X, CheckCircle, AlertCircle } from 'lucide-react'
 import { useAuthStore } from '../../../store/authStore'
 import { requestPayout } from '../../../lib/api/payments'
+import { supabase } from '../../../lib/supabase'
 
 // ─── Dummy earnings data ──────────────────────────────────────
 
@@ -238,27 +239,86 @@ export default function AdvisorEarnings() {
   const [period, setPeriod] = useState<Period>('month')
   const [showPayout, setShowPayout] = useState(false)
 
-  if (isRealUser) {
-    return (
-      <div style={{ maxWidth: '900px' }}>
-        <div style={{ marginBottom: '28px' }}>
-          <h1 style={{ color: '#F0F4FF', fontWeight: 700, fontSize: '22px', margin: '0 0 4px' }}>Earnings</h1>
-          <p style={{ color: '#8B9BB4', fontSize: '14px', margin: 0 }}>Track your income and request payouts.</p>
-        </div>
-        <div style={{ textAlign: 'center', padding: '80px 20px' }}>
-          <DollarSign size={44} style={{ color: '#1E2D45', margin: '0 auto 14px', display: 'block' }} />
-          <p style={{ color: '#8B9BB4', fontSize: '16px', fontWeight: 600, margin: '0 0 8px' }}>No earnings yet</p>
-          <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>
-            Your earnings will appear here once you complete sessions with clients.
-          </p>
-        </div>
-      </div>
-    )
+  // ── Real session data ──
+  const [sessions, setSessions] = useState<Array<{
+    id: string
+    client_name: string
+    type: string
+    duration_minutes: number | null
+    total_cost: number | null
+    started_at: string
+  }>>([])
+
+  useEffect(() => {
+    if (!isRealUser || !user) return
+    async function load() {
+      const { data: adv } = await supabase
+        .from('advisors')
+        .select('id')
+        .eq('user_id', user!.id)
+        .single()
+      if (!adv) return
+      const { data: sess } = await supabase
+        .from('sessions')
+        .select('id, client_name, type, duration_minutes, total_cost, started_at')
+        .eq('advisor_id', adv.id)
+        .eq('status', 'completed')
+        .order('started_at', { ascending: false })
+      setSessions(sess ?? [])
+    }
+    load()
+  }, [isRealUser, user?.id])
+
+  // ── Compute real chart data from sessions ──
+  function buildWeekData() {
+    const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(); d.setDate(d.getDate() - (6 - i))
+      const dayStart = new Date(d); dayStart.setHours(0, 0, 0, 0)
+      const dayEnd = new Date(d); dayEnd.setHours(23, 59, 59, 999)
+      const gross = sessions
+        .filter(s => { const sd = new Date(s.started_at); return sd >= dayStart && sd <= dayEnd })
+        .reduce((sum, s) => sum + (s.total_cost ?? 0), 0)
+      return { label: DAYS[d.getDay()], gross: +gross.toFixed(2), net: +(gross * 0.7).toFixed(2) }
+    })
+  }
+  function buildMonthData() {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    const year = new Date().getFullYear()
+    return MONTHS.map((label, i) => {
+      const gross = sessions
+        .filter(s => { const d = new Date(s.started_at); return d.getFullYear() === year && d.getMonth() === i })
+        .reduce((sum, s) => sum + (s.total_cost ?? 0), 0)
+      return { label, gross: +gross.toFixed(2), net: +(gross * 0.7).toFixed(2) }
+    })
+  }
+  function buildYearData() {
+    const yr = new Date().getFullYear()
+    return [yr - 3, yr - 2, yr - 1, yr].map(y => {
+      const gross = sessions
+        .filter(s => new Date(s.started_at).getFullYear() === y)
+        .reduce((sum, s) => sum + (s.total_cost ?? 0), 0)
+      return { label: String(y), gross: +gross.toFixed(2), net: +(gross * 0.7).toFixed(2) }
+    })
+  }
+  function computeTotals(start: Date) {
+    const f = sessions.filter(s => new Date(s.started_at) >= start)
+    const gross = f.reduce((s, r) => s + (r.total_cost ?? 0), 0)
+    const mins = f.reduce((s, r) => s + (r.duration_minutes ?? 0), 0)
+    return { gross: +gross.toFixed(2), net: +(gross * 0.7).toFixed(2), sessions: f.length, hours: +(mins / 60).toFixed(1) }
   }
 
-  const data = CHART_DATA[period]
-  const totals = PERIOD_TOTALS[period]
-  const available = 420.17  // pending payout balance
+  const _now = new Date()
+  const _weekStart = new Date(_now); _weekStart.setDate(_now.getDate() - 6); _weekStart.setHours(0, 0, 0, 0)
+  const _monthStart = new Date(_now.getFullYear(), _now.getMonth(), 1)
+  const _yearStart = new Date(_now.getFullYear(), 0, 1)
+  const realChart = { week: buildWeekData(), month: buildMonthData(), year: buildYearData() }
+  const realTotals = { week: computeTotals(_weekStart), month: computeTotals(_monthStart), year: computeTotals(_yearStart) }
+  const allTimeNet = sessions.reduce((s, r) => s + (r.total_cost ?? 0) * 0.7, 0)
+
+  const data = isRealUser ? realChart[period] : CHART_DATA[period]
+  const totals = isRealUser ? realTotals[period] : PERIOD_TOTALS[period]
+  const available = isRealUser ? +allTimeNet.toFixed(2) : 420.17  // net earnings / payout balance
 
   const PERIODS: { key: Period; label: string }[] = [
     { key: 'week', label: 'This Week' },
@@ -389,7 +449,9 @@ export default function AdvisorEarnings() {
         <h3 style={{ color: '#F0F4FF', fontWeight: 600, margin: '0 0 16px', fontSize: '15px' }}>
           Payout History
         </h3>
-        {[
+        {isRealUser ? (
+          <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>No payout history yet.</p>
+        ) : [
           { date: 'Nov 1, 2024', method: 'PayPal', amount: 380.50, status: 'Paid' },
           { date: 'Oct 1, 2024', method: 'PayPal', amount: 512.00, status: 'Paid' },
           { date: 'Sep 1, 2024', method: 'PayPal', amount: 298.75, status: 'Paid' },
@@ -440,7 +502,18 @@ export default function AdvisorEarnings() {
               </tr>
             </thead>
             <tbody>
-              {BREAKDOWN_ROWS.map((row, i) => (
+              {(isRealUser
+                ? sessions.slice(0, 20).map((s, i) => ({
+                    id: i,
+                    date: s.started_at.slice(0, 10),
+                    client: s.client_name ?? '—',
+                    type: s.type ?? 'chat',
+                    duration: s.duration_minutes ?? 0,
+                    gross: +(s.total_cost ?? 0).toFixed(2),
+                    net: +((s.total_cost ?? 0) * 0.7).toFixed(2),
+                  }))
+                : BREAKDOWN_ROWS
+              ).map((row, i) => (
                 <tr key={row.id} style={{ background: i % 2 === 1 ? 'rgba(255,255,255,0.02)' : 'none' }}>
                   <td style={{ padding: '12px', color: '#8B9BB4' }}>{row.date}</td>
                   <td style={{ padding: '12px', color: '#F0F4FF' }}>{row.client}</td>

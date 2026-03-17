@@ -640,7 +640,8 @@ export type NotificationType =
   | "session_cancelled"
   | "advisor_online"
   | "new_review"
-  | "payout_processed";
+  | "payout_processed"
+  | "advisor_review_response";
 
 export interface Notification {
   id: number;

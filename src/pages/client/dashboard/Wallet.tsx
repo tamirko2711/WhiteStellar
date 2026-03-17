@@ -7,6 +7,7 @@ import { format } from 'date-fns'
 import { useAuthStore } from '../../../store/authStore'
 import { getTransactions, addToWallet } from '../../../lib/api/wallet'
 import Toast from '../../../components/Toast'
+import { useNavigate, useLocation } from 'react-router-dom'
 
 const PRESET_AMOUNTS = [10, 25, 50, 100, 200]
 
@@ -234,6 +235,10 @@ function MockCheckoutForm({
 
 export default function Wallet() {
   const { user, updateWalletBalance } = useAuthStore()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const returnTo = (location.state as any)?.returnTo as string | undefined
+  const openSession = (location.state as any)?.openSession as { sessionType: string } | undefined
 
   // Top-up flow state
   const [step, setStep]                 = useState<WalletStep>('amount')
@@ -360,16 +365,31 @@ export default function Wallet() {
             <p style={{ color: '#4B5563', fontSize: '13px', margin: '0 0 28px' }}>
               Your balance has been updated.
             </p>
-            <button
-              onClick={resetTopUp}
-              style={{
-                background: '#C9A84C', color: '#0B0F1A', borderRadius: '10px',
-                padding: '12px 32px', fontWeight: 700, fontSize: '14px',
-                border: 'none', cursor: 'pointer',
-              }}
-            >
-              Add More Funds
-            </button>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+              {returnTo && (
+                <button
+                  onClick={() => navigate(returnTo, { state: { openSession } })}
+                  style={{
+                    background: '#C9A84C', color: '#0B0F1A', borderRadius: '10px',
+                    padding: '12px 32px', fontWeight: 700, fontSize: '14px',
+                    border: 'none', cursor: 'pointer',
+                  }}
+                >
+                  ← Return to Session
+                </button>
+              )}
+              <button
+                onClick={resetTopUp}
+                style={{
+                  background: returnTo ? 'transparent' : '#C9A84C',
+                  color: returnTo ? '#8B9BB4' : '#0B0F1A',
+                  borderRadius: '10px', padding: '12px 32px', fontWeight: 700, fontSize: '14px',
+                  border: returnTo ? '1px solid #1E2D45' : 'none', cursor: 'pointer',
+                }}
+              >
+                Add More Funds
+              </button>
+            </div>
           </div>
         )}
 

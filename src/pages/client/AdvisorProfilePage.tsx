@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react'
-import { useParams, useNavigate, Link } from 'react-router-dom'
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom'
 import { format } from 'date-fns'
 import {
   Star, Clock, MessageCircle, Phone, Video, Heart, Share2,
@@ -30,13 +30,7 @@ const SESSION_CONFIG: Record<SessionType, { label: string; icon: React.ReactNode
 
 const DURATION_PRESETS = [5, 10, 20, 30]
 
-const RATING_BARS = [
-  { stars: 5, pct: 78 },
-  { stars: 4, pct: 15 },
-  { stars: 3, pct: 5 },
-  { stars: 2, pct: 1 },
-  { stars: 1, pct: 1 },
-]
+// Computed dynamically from real reviews inside ReviewsCard
 
 const FLAGS: Record<string, string> = {
   en: '🇺🇸', es: '🇪🇸', fr: '🇫🇷', pt: '🇧🇷',
@@ -265,6 +259,15 @@ function SpecsCard({ advisor }: { advisor: Advisor }) {
 // ─── Reviews card ─────────────────────────────────────────────
 
 function ReviewsCard({ advisor }: { advisor: Advisor }) {
+  // Compute rating distribution from real reviews
+  const countMap: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
+  advisor.reviews.forEach(r => { countMap[Math.round(r.rating)] = (countMap[Math.round(r.rating)] ?? 0) + 1 })
+  const total = advisor.reviews.length || 1
+  const ratingBars = [5, 4, 3, 2, 1].map(stars => ({
+    stars,
+    pct: Math.round((countMap[stars] / total) * 100),
+  }))
+
   return (
     <div style={DARK_CARD}>
       {/* Heading */}
@@ -290,7 +293,7 @@ function ReviewsCard({ advisor }: { advisor: Advisor }) {
 
         {/* Bars */}
         <div className="flex flex-1 flex-col gap-2">
-          {RATING_BARS.map(bar => (
+          {ratingBars.map(bar => (
             <div key={bar.stars} className="flex items-center gap-3">
               <span className="w-4 shrink-0 text-right text-xs" style={{ color: '#8B9BB4' }}>{bar.stars}★</span>
               <div className="relative h-2 flex-1 overflow-hidden rounded-full" style={{ background: '#1E2D45' }}>
@@ -365,13 +368,14 @@ interface ConnectPanelProps {
   onShare: () => void
   walletBalance: number
   onStartSession: () => void
+  onTopUp: () => void
 }
 
 function ConnectPanel({
   advisor, selectedType, setSelectedType,
   selectedMinutes, setSelectedMinutes,
   saved, setSaved, notifyEnabled, setNotifyEnabled,
-  onShare, walletBalance, onStartSession,
+  onShare, walletBalance, onStartSession, onTopUp,
 }: ConnectPanelProps) {
   const pricePerMin = advisor.pricing[selectedType] ?? 0
   const estimatedCost = pricePerMin * selectedMinutes
@@ -487,10 +491,10 @@ function ConnectPanel({
             <span className="text-xs font-medium" style={{ color: '#2DD4BF' }}>Sufficient</span>
           </div>
         ) : (
-          <Link to="/payment-methods" className="flex items-center gap-1 text-xs font-medium" style={{ color: '#C9A84C', textDecoration: 'none' }}>
+          <button onClick={onTopUp} className="flex items-center gap-1 text-xs font-medium" style={{ color: '#C9A84C', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
             <AlertTriangle size={14} />
             Top Up Wallet
-          </Link>
+          </button>
         )}
       </div>
 
@@ -658,8 +662,11 @@ function mapAdvisorRow(row: any): Advisor {
 export default function AdvisorProfilePage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const location = useLocation()
   const walletBalance = useAuthStore(s => s.user?.walletBalance ?? 45.00)
   const user = useAuthStore(s => s.user)
+  const userType = useAuthStore(s => s.userType)
+  const isOwnProfile = userType === 'advisor'
 
   const [advisor, setAdvisor] = useState<Advisor | null>(null)
   const [loadingAdvisor, setLoadingAdvisor] = useState(true)
@@ -708,9 +715,16 @@ export default function AdvisorProfilePage() {
   const [selectedMinutes, setSelectedMinutes] = useState(10)
   const [saved, setSaved] = useState(false)
 
-  // Sync selectedType once advisor loads
+  // Sync selectedType once advisor loads; auto-open modal if returning from wallet top-up
   useEffect(() => {
-    if (advisor?.sessionTypes.length) setSelectedType(advisor.sessionTypes[0])
+    if (!advisor) return
+    const returnSession = (location.state as any)?.openSession as { sessionType: string } | undefined
+    if (returnSession?.sessionType) {
+      setSelectedType(returnSession.sessionType as SessionType)
+      setSessionModalOpen(true)
+    } else if (advisor.sessionTypes.length) {
+      setSelectedType(advisor.sessionTypes[0])
+    }
   }, [advisor])
 
   useEffect(() => {
@@ -782,20 +796,36 @@ export default function AdvisorProfilePage() {
     saved, setSaved: handleToggleSave, notifyEnabled, setNotifyEnabled,
     onShare: handleShare, walletBalance,
     onStartSession: () => setSessionModalOpen(true),
+    onTopUp: () => navigate('/dashboard/wallet', {
+      state: { returnTo: location.pathname, openSession: { sessionType: selectedType } },
+    }),
   }
 
   return (
     <div style={{ background: '#0B0F1A', minHeight: '100vh', color: '#F0F4FF' }}>
       <div className="mx-auto max-w-[1280px] px-4 py-10 md:px-6">
 
-        {/* ── Breadcrumb ── */}
-        <nav className="mb-6 flex items-center gap-2 text-sm">
-          <Link to="/" style={{ color: '#C9A84C', textDecoration: 'none' }}>Home</Link>
-          <span style={{ color: '#4B5563' }}>›</span>
-          <Link to="/advisors" style={{ color: '#C9A84C', textDecoration: 'none' }}>Advisors</Link>
-          <span style={{ color: '#4B5563' }}>›</span>
-          <span style={{ color: '#F0F4FF' }}>{advisor.fullName}</span>
-        </nav>
+        {/* ── Breadcrumb / Back button ── */}
+        {isOwnProfile ? (
+          <div className="mb-6">
+            <button
+              onClick={() => navigate('/advisor/dashboard')}
+              className="flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors"
+              style={{ background: '#131929', border: '1px solid #1E2D45', color: '#C9A84C', cursor: 'pointer' }}
+            >
+              <ArrowLeft size={15} />
+              Back to Dashboard
+            </button>
+          </div>
+        ) : (
+          <nav className="mb-6 flex items-center gap-2 text-sm">
+            <Link to="/" style={{ color: '#C9A84C', textDecoration: 'none' }}>Home</Link>
+            <span style={{ color: '#4B5563' }}>›</span>
+            <Link to="/advisors" style={{ color: '#C9A84C', textDecoration: 'none' }}>Advisors</Link>
+            <span style={{ color: '#4B5563' }}>›</span>
+            <span style={{ color: '#F0F4FF' }}>{advisor.fullName}</span>
+          </nav>
+        )}
 
         {/* ── Two-column layout ── */}
         <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:gap-8">

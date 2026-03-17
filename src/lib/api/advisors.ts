@@ -54,7 +54,7 @@ export const getAdvisorById = async (id: number) => {
 export const getAdvisorReviews = async (advisorId: number) => {
   const { data, error } = await supabase
     .from('reviews')
-    .select('*, profiles(full_name, avatar_url)')
+    .select('*')
     .eq('advisor_id', advisorId)
     .eq('is_approved', true)
     .order('created_at', { ascending: false })

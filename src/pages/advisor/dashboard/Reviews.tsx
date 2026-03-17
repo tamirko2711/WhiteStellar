@@ -3,10 +3,13 @@
 // src/pages/advisor/dashboard/Reviews.tsx
 // ============================================================
 
-import { useState } from 'react'
-import { Star, MessageSquare, X, Check } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Star, MessageSquare, X, Check, Loader2 } from 'lucide-react'
 import { format } from 'date-fns'
 import { useAuthStore } from '../../../store/authStore'
+import { supabase } from '../../../lib/supabase'
+import { getAdvisorReviews } from '../../../lib/api/advisors'
+import { saveAdvisorResponse } from '../../../lib/api/reviews'
 
 // ─── Data ─────────────────────────────────────────────────────
 
@@ -97,17 +100,24 @@ function ResponseModal({
 }: {
   review: ReviewRow
   existing: string
-  onSave: (text: string) => void
+  onSave: (text: string) => Promise<void>
   onClose: () => void
 }) {
   const [text, setText] = useState(existing)
+  const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const MAX = 500
 
-  function handleSave() {
-    onSave(text)
-    setSaved(true)
-    setTimeout(onClose, 1000)
+  async function handleSave() {
+    if (saving || saved) return
+    setSaving(true)
+    try {
+      await onSave(text)
+      setSaved(true)
+      setTimeout(onClose, 1000)
+    } finally {
+      setSaving(false)
+    }
   }
 
   return (
@@ -165,16 +175,16 @@ function ResponseModal({
             </button>
             <button
               onClick={handleSave}
-              disabled={!text.trim() || saved}
+              disabled={!text.trim() || saving || saved}
               style={{
                 padding: '8px 16px', borderRadius: '8px',
-                background: saved ? '#22C55E' : text.trim() ? 'linear-gradient(135deg,#C9A84C,#E8C96D)' : '#4B5563',
+                background: saved ? '#22C55E' : text.trim() && !saving ? 'linear-gradient(135deg,#C9A84C,#E8C96D)' : '#4B5563',
                 border: 'none', color: saved ? '#fff' : '#0B0F1A',
-                fontWeight: 700, cursor: text.trim() && !saved ? 'pointer' : 'default',
+                fontWeight: 700, cursor: text.trim() && !saving && !saved ? 'pointer' : 'default',
                 fontSize: '13px', display: 'flex', alignItems: 'center', gap: '6px',
               }}
             >
-              {saved ? <><Check size={13} /> Saved!</> : 'Post Response'}
+              {saved ? <><Check size={13} /> Saved!</> : saving ? <><Loader2 size={13} style={{ animation: 'spin 1s linear infinite' }} /> Saving…</> : 'Post Response'}
             </button>
           </div>
         </div>
@@ -257,27 +267,48 @@ function ReviewCard({
 export default function AdvisorReviews() {
   const { user } = useAuthStore()
   const isRealUser = !!(user && !user.id.startsWith('dev-'))
-  const [reviews, setReviews] = useState<ReviewRow[]>(REVIEWS)
+  const [reviews, setReviews] = useState<ReviewRow[]>(isRealUser ? [] : REVIEWS)
   const [filter, setFilter] = useState<FilterKey>('all')
   const [respondTo, setRespondTo] = useState<ReviewRow | null>(null)
 
-  if (isRealUser) {
-    return (
-      <div style={{ maxWidth: '860px' }}>
-        <div style={{ marginBottom: '28px' }}>
-          <h1 style={{ color: '#F0F4FF', fontWeight: 700, fontSize: '22px', margin: '0 0 4px' }}>Reviews</h1>
-          <p style={{ color: '#8B9BB4', fontSize: '14px', margin: 0 }}>Read client feedback and respond publicly to build trust.</p>
-        </div>
-        <div style={{ textAlign: 'center', padding: '80px 20px' }}>
-          <Star size={44} style={{ color: '#1E2D45', margin: '0 auto 14px', display: 'block' }} />
-          <p style={{ color: '#8B9BB4', fontSize: '16px', fontWeight: 600, margin: '0 0 8px' }}>No reviews yet</p>
-          <p style={{ color: '#4B5563', fontSize: '14px', margin: 0 }}>
-            Client reviews will appear here after completed sessions.
-          </p>
-        </div>
-      </div>
-    )
-  }
+  useEffect(() => {
+    if (!isRealUser || !user) return
+
+    async function load() {
+      try {
+        const { data: adv, error: advErr } = await supabase
+          .from('advisors')
+          .select('id')
+          .eq('user_id', user!.id)
+          .single()
+        if (advErr || !adv) {
+          console.error('[Reviews] Could not find advisor record:', advErr)
+          return
+        }
+        const rows = await getAdvisorReviews(adv.id)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        setReviews(rows.map((r: any) => ({
+          id: Number(r.id),
+          clientName: String(r.client_name ?? 'Client'),
+          clientAvatar: r.client_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(r.client_name ?? 'C')}&background=1E2D45&color=C9A84C`,
+          rating: Number(r.rating ?? 5),
+          comment: String(r.comment ?? ''),
+          sessionType: String(r.session_type ?? 'chat'),
+          createdAt: String(r.created_at ?? ''),
+          response: r.advisor_response ?? undefined,
+        })))
+      } catch (err) {
+        console.error('[Reviews] Failed to load reviews:', err)
+      }
+    }
+
+    load()
+
+    // Re-fetch when the advisor switches back to this tab
+    const handleVisibility = () => { if (!document.hidden) load() }
+    document.addEventListener('visibilitychange', handleVisibility)
+    return () => document.removeEventListener('visibilitychange', handleVisibility)
+  }, [isRealUser, user?.id])
 
   const filtered = reviews.filter(r => {
     if (filter === 'all') return true
@@ -288,17 +319,18 @@ export default function AdvisorReviews() {
     return true
   })
 
-  function saveResponse(id: number, response: string) {
+  async function saveResponse(id: number, response: string): Promise<void> {
+    await saveAdvisorResponse(id, response)
     setReviews(prev => prev.map(r => r.id === id ? { ...r, response } : r))
   }
 
   // Rating summary
-  const avg = reviews.reduce((s, r) => s + r.rating, 0) / reviews.length
+  const avg = reviews.length > 0 ? reviews.reduce((s, r) => s + r.rating, 0) / reviews.length : 0
   const countMap: Record<number, number> = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 }
   reviews.forEach(r => countMap[r.rating]++)
 
   const PILLS: { key: FilterKey; label: string }[] = [
-    { key: 'all', label: `All (${reviews.length})` },
+    { key: 'all', label: reviews.length > 0 ? `All (${reviews.length})` : 'All' },
     { key: '5', label: '5 Stars' },
     { key: '4', label: '4 Stars' },
     { key: '3', label: '3 Stars' },
@@ -353,7 +385,7 @@ export default function AdvisorReviews() {
         {/* Response rate */}
         <div style={{ textAlign: 'center' }}>
           <p style={{ color: '#F0F4FF', fontSize: '22px', fontWeight: 700, margin: '0 0 4px' }}>
-            {Math.round((reviews.filter(r => r.response).length / reviews.length) * 100)}%
+            {reviews.length > 0 ? Math.round((reviews.filter(r => r.response).length / reviews.length) * 100) : 0}%
           </p>
           <p style={{ color: '#8B9BB4', fontSize: '13px', margin: 0 }}>Response Rate</p>
         </div>
@@ -383,7 +415,11 @@ export default function AdvisorReviews() {
       {filtered.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '60px 20px', color: '#4B5563' }}>
           <Star size={40} strokeWidth={1} style={{ marginBottom: '12px', opacity: 0.4 }} />
-          <p style={{ margin: 0 }}>No reviews match this filter.</p>
+          <p style={{ margin: 0 }}>
+            {reviews.length === 0
+              ? 'No reviews yet. Client reviews will appear here after completed sessions.'
+              : 'No reviews match this filter.'}
+          </p>
         </div>
       ) : (
         filtered.map(r => (

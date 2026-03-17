@@ -8,10 +8,13 @@ import {
   Mic, MicOff, Video, VideoOff, PhoneOff, MessageCircle, Monitor, MoreHorizontal, X, Send,
 } from 'lucide-react'
 import { useSessionStore } from '../../store/sessionStore'
+import { useAuthStore } from '../../store/authStore'
+import { supabase } from '../../lib/supabase'
 import SessionWrapper from '../../components/session/SessionWrapper'
 import SessionHeader from '../../components/session/SessionHeader'
 import BillingWarning from '../../components/session/BillingWarning'
 import Toast from '../../components/Toast'
+import { useAgoraSession } from '../../hooks/useAgoraSession'
 
 // ─── Control button ───────────────────────────────────────────
 
@@ -108,18 +111,94 @@ function MiniChatDrawer({ onClose }: { onClose: () => void }) {
 
 export default function VideoSessionPage() {
   const {
-    advisorName, advisorAvatar, clientAvatar,
-    isMuted, isCameraOff, toggleMute, toggleCamera, endSession,
+    advisorName, advisorAvatar, clientAvatar, clientName,
+    isMuted, isCameraOff, toggleMute, toggleCamera, endSession, setEnded, supabaseSessionId,
   } = useSessionStore()
+  const userType = useAuthStore(s => s.userType)
+  const isAdvisorSide = userType === 'advisor'
 
   const [showChat, setShowChat] = useState(false)
   const [showActionSheet, setShowActionSheet] = useState(false)
   const [toast, setToast] = useState({ msg: '', visible: false })
+  const [sessionEndedByOther, setSessionEndedByOther] = useState(false)
+  const [showAdvisorEndModal, setShowAdvisorEndModal] = useState(false)
+  const otherEndedRef = useRef(false)
+
+  // ── Agora real video + audio ──────────────────────────────────
+  const { remoteVideoTrack, localVideoTrack, isJoined, error: agoraError, setMuted, setCameraOff } = useAgoraSession({
+    channel: supabaseSessionId ? String(supabaseSessionId) : null,
+    mode: 'video',
+  })
+
+  // Keep Agora mute/camera in sync with store toggles
+  useEffect(() => { setMuted(isMuted) }, [isMuted, setMuted])
+  useEffect(() => { setCameraOff(isCameraOff) }, [isCameraOff, setCameraOff])
+
+  // ── Poll for other side ending the session ───────────────────
+  useEffect(() => {
+    if (!supabaseSessionId) return
+    const poll = () => {
+      supabase
+        .from('sessions')
+        .select('status')
+        .eq('id', supabaseSessionId)
+        .single()
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .then(({ data }: { data: any }) => {
+          if (!data) return
+          if (data.status === 'completed' && !otherEndedRef.current) {
+            const localStatus = useSessionStore.getState().status
+            if (localStatus === 'active') {
+              otherEndedRef.current = true
+              setSessionEndedByOther(true)
+            }
+          }
+        })
+    }
+    const id = setInterval(poll, 2000)
+    return () => clearInterval(id)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [supabaseSessionId])
+
+  // Auto-navigate after 8s when other side ends
+  useEffect(() => {
+    if (!sessionEndedByOther) return
+    const timer = setTimeout(() => setEnded(), 8000)
+    return () => clearTimeout(timer)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionEndedByOther])
+
+  // Attach remote video stream to DOM element
+  const remoteVideoRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (remoteVideoTrack && remoteVideoRef.current) {
+      remoteVideoTrack.play(remoteVideoRef.current)
+    }
+    return () => { remoteVideoTrack?.stop() }
+  }, [remoteVideoTrack])
+
+  // Attach local (self-view) video stream to DOM element
+  const localVideoRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (localVideoTrack && localVideoRef.current && !isCameraOff) {
+      localVideoTrack.play(localVideoRef.current)
+    }
+    return () => { localVideoTrack?.stop() }
+  }, [localVideoTrack, isCameraOff])
 
   // Draggable PiP
   const [pipPos, setPipPos] = useState({ bottom: 100, right: 24 })
   const dragging = useRef(false)
   const startRef = useRef({ mouseX: 0, mouseY: 0, bottom: 100, right: 24 })
+
+  // Advisor gets confirmation; client ends directly
+  function handleEndClick() {
+    if (isAdvisorSide) {
+      setShowAdvisorEndModal(true)
+    } else {
+      void endSession()
+    }
+  }
 
   function showToast(msg: string) {
     setToast({ msg, visible: true })
@@ -194,18 +273,18 @@ export default function VideoSessionPage() {
             }} />
           </div>
 
-          {/* Simulated video feed — advisor */}
-          <div style={{
-            position: 'absolute', inset: 0, display: 'flex',
-            alignItems: 'center', justifyContent: 'center',
-          }}>
-            {/* Scanline overlay */}
+          {/* Remote video feed — fills the full background */}
+          <div
+            ref={remoteVideoRef}
+            style={{ position: 'absolute', inset: 0, zIndex: 2 }}
+          />
+
+          {/* Fallback: show advisor avatar when remote stream not yet received */}
+          {!remoteVideoTrack && (
             <div style={{
-              position: 'absolute', inset: 0, zIndex: 1, pointerEvents: 'none',
-              background: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.04) 3px, rgba(0,0,0,0.04) 4px)',
-            }} />
-            <div style={{
-              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '14px', zIndex: 2,
+              position: 'absolute', inset: 0, zIndex: 3,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              flexDirection: 'column', gap: '14px',
             }}>
               <img
                 src={advisorAvatar}
@@ -213,9 +292,25 @@ export default function VideoSessionPage() {
                 style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', border: '2px solid rgba(201,168,76,0.4)' }}
               />
               <p style={{ color: '#F0F4FF', fontWeight: 600, fontSize: '16px', margin: 0 }}>{advisorName}</p>
-              <p style={{ color: '#8B9BB4', fontSize: '13px', margin: 0 }}>Camera On</p>
+              <p style={{ color: '#8B9BB4', fontSize: '13px', margin: 0 }}>
+                {isJoined ? 'Waiting for camera…' : 'Connecting…'}
+              </p>
+              {agoraError && (
+                <div style={{
+                  background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)',
+                  borderRadius: '10px', padding: '10px 16px', maxWidth: '300px', textAlign: 'center', marginTop: '8px',
+                }}>
+                  <p style={{ color: '#EF4444', fontSize: '12px', margin: 0 }}>⚠️ {agoraError}</p>
+                </div>
+              )}
             </div>
-          </div>
+          )}
+
+          {/* Scanline overlay (subtle texture) */}
+          <div style={{
+            position: 'absolute', inset: 0, zIndex: 4, pointerEvents: 'none',
+            background: 'repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.03) 3px, rgba(0,0,0,0.03) 4px)',
+          }} />
         </div>
 
         {/* Overlay header */}
@@ -252,20 +347,24 @@ export default function VideoSessionPage() {
             background: '#0D1221', border: '2px solid #1E2D45',
             borderRadius: '12px', cursor: 'grab', overflow: 'hidden',
             boxShadow: '0 8px 32px rgba(0,0,0,0.6)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            flexDirection: 'column', gap: '6px',
           }}
         >
           {isCameraOff ? (
-            <>
+            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '6px' }}>
               <VideoOff size={20} color="#4B5563" />
               <span style={{ color: '#4B5563', fontSize: '11px' }}>Camera Off</span>
-            </>
+            </div>
           ) : (
-            <>
-              <img src={clientAvatar} alt="You" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
-              <span style={{ color: '#8B9BB4', fontSize: '11px' }}>You</span>
-            </>
+            /* Real local camera feed */
+            <div ref={localVideoRef} style={{ width: '100%', height: '100%' }}>
+              {/* Fallback avatar while camera initializes */}
+              {!localVideoTrack && (
+                <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column', gap: '6px' }}>
+                  <img src={clientAvatar} alt="You" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+                  <span style={{ color: '#8B9BB4', fontSize: '11px' }}>You</span>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -278,7 +377,7 @@ export default function VideoSessionPage() {
         }}>
           <CtrlBtn icon={isMuted ? MicOff : Mic} onClick={toggleMute} active={isMuted} label={isMuted ? 'Unmute' : 'Mute'} />
           <CtrlBtn icon={isCameraOff ? VideoOff : Video} onClick={toggleCamera} active={isCameraOff} label={isCameraOff ? 'Start Cam' : 'Stop Cam'} />
-          <CtrlBtn icon={PhoneOff} onClick={endSession} danger large label="End" />
+          <CtrlBtn icon={PhoneOff} onClick={handleEndClick} danger large label="End" />
           <CtrlBtn icon={MessageCircle} onClick={() => setShowChat(v => !v)} label="Chat" />
           <CtrlBtn icon={Monitor} onClick={() => showToast('Screen sharing coming soon')} label="Share" />
           <div style={{ position: 'relative' }}>
@@ -321,6 +420,101 @@ export default function VideoSessionPage() {
         </div>
 
         <Toast message={toast.msg} visible={toast.visible} />
+
+        {/* ── Advisor end confirmation modal ── */}
+        {showAdvisorEndModal && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 500,
+            background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
+          }}>
+            <div style={{
+              background: '#0D1221', border: '1px solid #1A2235',
+              borderRadius: '20px', padding: '32px 28px', maxWidth: '360px', width: '100%',
+              textAlign: 'center',
+            }}>
+              <div style={{ fontSize: '44px', marginBottom: '16px' }}>🎥</div>
+              <h2 style={{
+                color: '#F0F4FF', fontWeight: 700, fontSize: '18px',
+                fontFamily: "'Playfair Display', serif", margin: '0 0 10px',
+              }}>
+                End Video Call?
+              </h2>
+              <p style={{ color: '#8B9BB4', fontSize: '14px', lineHeight: 1.6, margin: '0 0 24px' }}>
+                This will end the session for both you and <strong style={{ color: '#F0F4FF' }}>{clientName}</strong>.
+              </p>
+              <div style={{ display: 'flex', gap: '12px' }}>
+                <button
+                  onClick={() => setShowAdvisorEndModal(false)}
+                  style={{
+                    flex: 1, padding: '14px',
+                    background: 'transparent', border: '1px solid #1E2D45',
+                    borderRadius: '12px', color: '#8B9BB4', fontWeight: 600,
+                    fontSize: '15px', cursor: 'pointer',
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => { setShowAdvisorEndModal(false); void endSession() }}
+                  style={{
+                    flex: 1, padding: '14px',
+                    background: '#EF4444', border: 'none',
+                    borderRadius: '12px', color: '#fff', fontWeight: 700,
+                    fontSize: '15px', cursor: 'pointer',
+                  }}
+                >
+                  End Call
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Session ended by other participant ── */}
+        {sessionEndedByOther && (
+          <div style={{
+            position: 'fixed', inset: 0, zIndex: 500,
+            background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px',
+          }}>
+            <div style={{
+              background: '#0D1221', border: '1px solid #1A2235',
+              borderRadius: '20px', padding: '32px 28px', maxWidth: '380px', width: '100%',
+              textAlign: 'center',
+            }}>
+              <div style={{ fontSize: '48px', marginBottom: '16px' }}>
+                {isAdvisorSide ? '👋' : '💫'}
+              </div>
+              <h2 style={{
+                color: '#F0F4FF', fontWeight: 700, fontSize: '18px',
+                fontFamily: "'Playfair Display', serif", margin: '0 0 10px',
+              }}>
+                Session Ended
+              </h2>
+              <p style={{ color: '#8B9BB4', fontSize: '14px', lineHeight: 1.6, margin: '0 0 24px' }}>
+                {isAdvisorSide
+                  ? <><strong style={{ color: '#F0F4FF' }}>{clientName}</strong> has ended the session. Thank you for your guidance!</>
+                  : <><strong style={{ color: '#F0F4FF' }}>{advisorName}</strong> has ended the session. We hope it was helpful!</>
+                }
+              </p>
+              <button
+                onClick={() => setEnded()}
+                style={{
+                  width: '100%', padding: '14px',
+                  background: 'linear-gradient(135deg,#C9A84C,#E8C96D)',
+                  border: 'none', borderRadius: '12px',
+                  color: '#0B0F1A', fontWeight: 700, fontSize: '15px', cursor: 'pointer',
+                }}
+              >
+                View Session Summary
+              </button>
+              <p style={{ color: '#4B5563', fontSize: '12px', margin: '12px 0 0' }}>
+                Auto-redirecting in a few seconds…
+              </p>
+            </div>
+          </div>
+        )}
       </SessionWrapper>
     </>
   )

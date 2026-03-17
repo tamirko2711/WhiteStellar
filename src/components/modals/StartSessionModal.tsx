@@ -4,7 +4,7 @@
 // ============================================================
 
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { MessageCircle, Mic, Video, X, Wallet, Clock } from 'lucide-react'
 import { useAuthStore } from '../../store/authStore'
 import { useSessionStore } from '../../store/sessionStore'
@@ -30,6 +30,7 @@ export default function StartSessionModal({
   const { user } = useAuthStore()
   const startSession = useSessionStore(s => s.startSession)
   const navigate = useNavigate()
+  const location = useLocation()
 
   const [agreed, setAgreed] = useState(false)
   const [starting, setStarting] = useState(false)
@@ -217,11 +218,19 @@ export default function StartSessionModal({
             <span style={{ color: '#F59E0B', fontSize: '13px', fontWeight: 600 }}>
               ⚠️ Insufficient balance
             </span>
-            <button style={{
-              background: 'linear-gradient(135deg,#C9A84C,#E8C96D)',
-              border: 'none', color: '#0B0F1A', borderRadius: '8px',
-              padding: '7px 14px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', flexShrink: 0,
-            }}>
+            <button
+              onClick={() => {
+                onClose()
+                navigate('/dashboard/wallet', {
+                  state: { returnTo: location.pathname, openSession: { sessionType } },
+                })
+              }}
+              style={{
+                background: 'linear-gradient(135deg,#C9A84C,#E8C96D)',
+                border: 'none', color: '#0B0F1A', borderRadius: '8px',
+                padding: '7px 14px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', flexShrink: 0,
+              }}
+            >
               Top Up Wallet
             </button>
           </div>

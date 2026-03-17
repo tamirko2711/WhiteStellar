@@ -3,13 +3,13 @@
 // src/pages/admin/Reviews.tsx
 // ============================================================
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Star, Check, X, Trash2 } from 'lucide-react'
 import { format } from 'date-fns'
-import { ADVISORS } from '../../data/advisors'
 import Toast from '../../components/Toast'
+import { getAdminReviews } from '../../lib/api/reviews'
 
-// ─── Collect all reviews from all advisors ────────────────────
+// ─── Types ────────────────────────────────────────────────────
 
 interface AdminReview {
   id: number
@@ -23,32 +23,8 @@ interface AdminReview {
   createdAt: string
   isApproved: boolean
   status: 'approved' | 'pending' | 'rejected'
+  advisorResponse?: string
 }
-
-const ALL_REVIEWS: AdminReview[] = ADVISORS.flatMap(a =>
-  a.reviews.map(r => ({
-    ...r,
-    advisorId: a.id,
-    advisorName: a.fullName,
-    status: (r.isApproved ? 'approved' : 'pending') as AdminReview['status'],
-  }))
-)
-
-// Extra dummy reviews for richer demo
-const EXTRA: AdminReview[] = [
-  {
-    id: 100, advisorId: 2, advisorName: 'Marcus Veil',
-    clientName: 'Oliver W.', clientAvatar: 'https://i.pravatar.cc/40?img=60',
-    rating: 2, comment: 'Reading felt very generic, not specific to my situation.',
-    sessionType: 'chat', createdAt: '2024-11-10', isApproved: false, status: 'pending',
-  },
-  {
-    id: 101, advisorId: 6, advisorName: 'Iris Moonwell',
-    clientName: 'Priya N.', clientAvatar: 'https://i.pravatar.cc/40?img=49',
-    rating: 5, comment: 'Iris connected to my dream patterns instantly. Profound session.',
-    sessionType: 'video', createdAt: '2024-11-12', isApproved: false, status: 'pending',
-  },
-]
 
 type RatingFilter = 'all' | '5' | '4' | '3' | '1-2'
 type StatusFilter = 'all' | 'approved' | 'pending' | 'rejected'
@@ -102,8 +78,8 @@ function ReviewCard({ review, onApprove, onReject, onDelete }: {
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Stars rating={review.rating} />
               <span style={{ color: '#4B5563', fontSize: '11px' }}>
-                for <strong style={{ color: '#C9A84C' }}>{review.advisorName}</strong>
-                {' '}· via {review.sessionType}
+                {review.advisorName && <>for <strong style={{ color: '#C9A84C' }}>{review.advisorName}</strong>{' '}· </>}
+                via {review.sessionType}
                 {' '}· {format(new Date(review.createdAt), 'MMM d, yyyy')}
               </span>
             </div>
@@ -115,6 +91,22 @@ function ReviewCard({ review, onApprove, onReject, onDelete }: {
       <p style={{ color: '#CBD5E1', fontSize: '14px', lineHeight: 1.6, margin: '0 0 14px' }}>
         "{review.comment}"
       </p>
+
+      {/* Advisor response — visible to admin for moderation */}
+      {review.advisorResponse && (
+        <div style={{
+          borderLeft: '3px solid rgba(201,168,76,0.5)',
+          background: 'rgba(201,168,76,0.06)',
+          borderRadius: '0 8px 8px 0', padding: '10px 14px', marginBottom: '14px',
+        }}>
+          <p style={{ color: '#C9A84C', fontSize: '11px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', margin: '0 0 4px' }}>
+            Advisor Response
+          </p>
+          <p style={{ color: '#CBD5E1', fontSize: '13px', margin: 0, lineHeight: 1.6 }}>
+            {review.advisorResponse}
+          </p>
+        </div>
+      )}
 
       <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
         {review.status !== 'approved' && (
@@ -150,7 +142,26 @@ function ReviewCard({ review, onApprove, onReject, onDelete }: {
 // ─── Main ─────────────────────────────────────────────────────
 
 export default function AdminReviews() {
-  const [reviews, setReviews] = useState<AdminReview[]>([...ALL_REVIEWS, ...EXTRA])
+  const [reviews, setReviews] = useState<AdminReview[]>([])
+
+  useEffect(() => {
+    getAdminReviews().then((rows: any[]) => {
+      setReviews(rows.map(r => ({
+        id: Number(r.id),
+        advisorId: Number(r.advisor_id),
+        advisorName: String(r.advisor_name ?? ''),
+        clientName: String(r.client_name ?? 'Client'),
+        clientAvatar: r.client_avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(r.client_name ?? 'C')}&background=1E2D45&color=C9A84C`,
+        rating: Number(r.rating ?? 5),
+        comment: String(r.comment ?? ''),
+        sessionType: String(r.session_type ?? 'chat'),
+        createdAt: String(r.created_at ?? ''),
+        isApproved: Boolean(r.is_approved),
+        status: (r.is_approved ? 'approved' : 'pending') as AdminReview['status'],
+        advisorResponse: r.advisor_response ?? undefined,
+      })))
+    }).catch(err => console.error('[Admin Reviews] Failed to load:', err))
+  }, [])
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [ratingFilter, setRatingFilter] = useState<RatingFilter>('all')
   const [advisorFilter, setAdvisorFilter] = useState('all')
@@ -212,7 +223,9 @@ export default function AdminReviews() {
         </div>
         <select value={advisorFilter} onChange={e => setAdvisorFilter(e.target.value)} style={selectStyle}>
           <option value="all">All Advisors</option>
-          {ADVISORS.map(a => <option key={a.id} value={String(a.id)}>{a.fullName}</option>)}
+          {[...new Map(reviews.map(r => [r.advisorId, r.advisorName])).entries()]
+            .filter(([, name]) => name)
+            .map(([id, name]) => <option key={id} value={String(id)}>{name}</option>)}
         </select>
         <select value={ratingFilter} onChange={e => setRatingFilter(e.target.value as RatingFilter)} style={selectStyle}>
           <option value="all">All Ratings</option>

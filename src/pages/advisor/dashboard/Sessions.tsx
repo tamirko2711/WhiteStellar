@@ -1,11 +1,12 @@
-import { useState, useEffect } from 'react'
-import { MessageCircle, Mic, Video, ChevronDown, ChevronUp, FileText, X } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { MessageCircle, Mic, Video, ChevronDown, ChevronUp, FileText, X, Clock, DollarSign } from 'lucide-react'
 import { format } from 'date-fns'
 import { SESSIONS, CLIENTS, getSessionsByAdvisor, type Session } from '../../../data/advisors'
 import Toast from '../../../components/Toast'
 import { useAuthStore } from '../../../store/authStore'
 import { getAdvisorSessions } from '../../../lib/api/sessions'
 import { getAdvisorByUserId } from '../../../lib/api/advisorProfile'
+import { supabase } from '../../../lib/supabase'
 
 interface RealSession {
   id: number
@@ -17,6 +18,16 @@ interface RealSession {
   status: string
   started_at: string
   ended_at: string | null
+}
+
+interface ChatMessage {
+  id: number | string
+  sender_id: string
+  sender_name: string
+  sender_avatar: string
+  text: string
+  is_system: boolean
+  created_at: string
 }
 
 // ─── Constants ────────────────────────────────────────────────
@@ -37,6 +48,235 @@ const STATUS_PILLS: { key: StatusKey; label: string }[] = [
   { key: 'all', label: 'All' }, { key: 'completed', label: 'Completed' },
   { key: 'cancelled', label: 'Cancelled' }, { key: 'in_progress', label: 'In Progress' },
 ]
+
+// ─── Chat Transcript Drawer ───────────────────────────────────
+
+function ChatDrawer({
+  sessionId, sessionType, clientName, startedAt, durationMinutes, totalCost, advisorUserId, onClose,
+}: {
+  sessionId: number
+  sessionType: string
+  clientName: string
+  startedAt: string
+  durationMinutes: number | null
+  totalCost: number | null
+  advisorUserId: string
+  onClose: () => void
+}) {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [loading, setLoading] = useState(true)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const typeStyle = TYPE_COLORS[sessionType] ?? TYPE_COLORS.chat
+  const net = totalCost != null ? +(totalCost * 0.7).toFixed(2) : null
+
+  useEffect(() => {
+    if (sessionType !== 'chat') { setLoading(false); return }
+    supabase
+      .from('session_messages')
+      .select('*')
+      .eq('session_id', sessionId)
+      .order('created_at', { ascending: true })
+      .then(({ data }) => {
+        setMessages((data ?? []) as ChatMessage[])
+        setLoading(false)
+      })
+  }, [sessionId, sessionType])
+
+  useEffect(() => {
+    if (!loading) {
+      setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60)
+    }
+  }, [loading, messages.length])
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div
+        onClick={onClose}
+        style={{
+          position: 'fixed', inset: 0, zIndex: 300,
+          background: 'rgba(0,0,0,0.55)', backdropFilter: 'blur(3px)',
+        }}
+      />
+
+      {/* Panel */}
+      <div style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 301,
+        width: 'min(500px, 100vw)', background: '#0D1221',
+        borderLeft: '1px solid #1E2D45',
+        display: 'flex', flexDirection: 'column',
+        animation: 'drawerSlideIn 0.25s cubic-bezier(0.4,0,0.2,1) both',
+        boxShadow: '-8px 0 40px rgba(0,0,0,0.5)',
+      }}>
+        <style>{`
+          @keyframes drawerSlideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to   { transform: translateX(0);    opacity: 1; }
+          }
+        `}</style>
+
+        {/* Header */}
+        <div style={{
+          padding: '20px 20px 16px', borderBottom: '1px solid #1E2D45',
+          flexShrink: 0, background: '#0F1828',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: '14px' }}>
+            <div>
+              <h2 style={{ color: '#F0F4FF', fontWeight: 700, fontSize: '17px', margin: '0 0 3px' }}>
+                Session Transcript
+              </h2>
+              <p style={{ color: '#8B9BB4', fontSize: '13px', margin: 0 }}>
+                {clientName} · {format(new Date(startedAt), 'MMM d, yyyy · h:mm a')}
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              style={{
+                background: 'rgba(255,255,255,0.05)', border: '1px solid #1E2D45',
+                borderRadius: '8px', padding: '6px', cursor: 'pointer', color: '#8B9BB4',
+                display: 'flex', alignItems: 'center', flexShrink: 0,
+              }}
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Session meta pills */}
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            <span style={{
+              display: 'inline-flex', alignItems: 'center', gap: '4px',
+              background: typeStyle.bg, color: typeStyle.color,
+              borderRadius: '20px', padding: '3px 10px', fontSize: '12px', fontWeight: 600,
+            }}>
+              {sessionType === 'video' ? <Video size={11} /> : sessionType === 'audio' ? <Mic size={11} /> : <MessageCircle size={11} />}
+              {sessionType.charAt(0).toUpperCase() + sessionType.slice(1)}
+            </span>
+            {durationMinutes != null && durationMinutes > 0 && (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                background: 'rgba(255,255,255,0.05)', color: '#8B9BB4',
+                borderRadius: '20px', padding: '3px 10px', fontSize: '12px',
+              }}>
+                <Clock size={11} /> {durationMinutes} min
+              </span>
+            )}
+            {net != null && net > 0 && (
+              <span style={{
+                display: 'inline-flex', alignItems: 'center', gap: '4px',
+                background: 'rgba(201,168,76,0.1)', color: '#C9A84C',
+                borderRadius: '20px', padding: '3px 10px', fontSize: '12px', fontWeight: 600,
+              }}>
+                <DollarSign size={11} /> +${net.toFixed(2)} earned
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {sessionType !== 'chat' ? (
+            <div style={{
+              flex: 1, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center',
+              textAlign: 'center', padding: '40px 24px',
+            }}>
+              {sessionType === 'audio' ? <Mic size={40} style={{ color: '#1E2D45', marginBottom: '14px' }} /> : <Video size={40} style={{ color: '#1E2D45', marginBottom: '14px' }} />}
+              <p style={{ color: '#8B9BB4', fontSize: '15px', fontWeight: 600, margin: '0 0 8px' }}>
+                No text transcript available
+              </p>
+              <p style={{ color: '#4B5563', fontSize: '13px', margin: 0, lineHeight: 1.6 }}>
+                {sessionType === 'audio' ? 'Audio' : 'Video'} sessions don't generate a text transcript. Session details are shown above.
+              </p>
+            </div>
+          ) : loading ? (
+            <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <div style={{
+                width: '24px', height: '24px', border: '3px solid #1E2D45',
+                borderTopColor: '#C9A84C', borderRadius: '50%',
+                animation: 'spin 0.7s linear infinite',
+              }} />
+              <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+            </div>
+          ) : messages.length === 0 ? (
+            <div style={{
+              flex: 1, display: 'flex', flexDirection: 'column',
+              alignItems: 'center', justifyContent: 'center',
+              textAlign: 'center', padding: '40px 24px',
+            }}>
+              <MessageCircle size={40} style={{ color: '#1E2D45', marginBottom: '14px' }} />
+              <p style={{ color: '#8B9BB4', fontSize: '15px', fontWeight: 600, margin: '0 0 8px' }}>
+                No messages recorded
+              </p>
+              <p style={{ color: '#4B5563', fontSize: '13px', margin: 0 }}>
+                No chat transcript was saved for this session.
+              </p>
+            </div>
+          ) : (
+            <>
+              {messages.map(msg => {
+                if (msg.is_system) {
+                  return (
+                    <div key={String(msg.id)} style={{ textAlign: 'center' }}>
+                      <span style={{
+                        display: 'inline-block', background: 'rgba(255,255,255,0.04)',
+                        color: '#4B5563', fontSize: '11px', padding: '3px 10px', borderRadius: '10px',
+                      }}>
+                        {msg.text}
+                      </span>
+                    </div>
+                  )
+                }
+
+                const isAdvisor = msg.sender_id === advisorUserId
+                const initials = (msg.sender_name || 'U').split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2)
+
+                return (
+                  <div key={String(msg.id)} style={{
+                    display: 'flex', flexDirection: isAdvisor ? 'row-reverse' : 'row',
+                    gap: '8px', alignItems: 'flex-end',
+                  }}>
+                    {/* Avatar */}
+                    {msg.sender_avatar ? (
+                      <img src={msg.sender_avatar} alt={msg.sender_name}
+                        style={{ width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0 }} />
+                    ) : (
+                      <div style={{
+                        width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+                        background: isAdvisor ? 'rgba(201,168,76,0.2)' : '#1E2D45',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '11px', fontWeight: 700,
+                        color: isAdvisor ? '#C9A84C' : '#8B9BB4',
+                      }}>
+                        {initials}
+                      </div>
+                    )}
+
+                    <div style={{ maxWidth: '72%', display: 'flex', flexDirection: 'column', gap: '3px', alignItems: isAdvisor ? 'flex-end' : 'flex-start' }}>
+                      <span style={{ color: '#4B5563', fontSize: '10px', paddingInline: '2px' }}>
+                        {msg.sender_name} · {format(new Date(msg.created_at), 'h:mm a')}
+                      </span>
+                      <div style={{
+                        background: isAdvisor ? 'rgba(201,168,76,0.15)' : '#1A2540',
+                        border: `1px solid ${isAdvisor ? 'rgba(201,168,76,0.25)' : '#1E2D45'}`,
+                        borderRadius: isAdvisor ? '16px 4px 16px 16px' : '4px 16px 16px 16px',
+                        padding: '9px 13px',
+                        color: isAdvisor ? '#F0E8C9' : '#D1D9EC',
+                        fontSize: '14px', lineHeight: 1.55,
+                      }}>
+                        {msg.text}
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+              <div ref={bottomRef} />
+            </>
+          )}
+        </div>
+      </div>
+    </>
+  )
+}
 
 // ─── Notes Modal ──────────────────────────────────────────────
 
@@ -116,10 +356,10 @@ function NotesModal({
   )
 }
 
-// ─── Session card ─────────────────────────────────────────────
+// ─── Session card (dev mode) ───────────────────────────────────
 
-function SessionCard({ session, expanded, onToggle, onNote, hasNote }: {
-  session: Session; expanded: boolean; onToggle: () => void; onNote: () => void; hasNote: boolean
+function SessionCard({ session, expanded, onToggle, onNote, hasNote, onViewChat }: {
+  session: Session; expanded: boolean; onToggle: () => void; onNote: () => void; hasNote: boolean; onViewChat: () => void
 }) {
   const client    = CLIENTS.find(c => c.id === session.clientId)
   const typeStyle = TYPE_COLORS[session.type]
@@ -175,12 +415,21 @@ function SessionCard({ session, expanded, onToggle, onNote, hasNote }: {
             {isCompleted ? 'Completed' : 'Cancelled'}
           </span>
           <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {session.type === 'chat' && (
+              <button onClick={onViewChat} style={{
+                display: 'flex', alignItems: 'center', gap: '4px',
+                background: 'rgba(45,212,191,0.08)', border: '1px solid rgba(45,212,191,0.25)',
+                color: '#2DD4BF', borderRadius: '8px', padding: '4px 10px', fontSize: '12px', cursor: 'pointer',
+              }}>
+                <MessageCircle size={11} /> View Chat
+              </button>
+            )}
             <button onClick={onToggle} style={{
               display: 'flex', alignItems: 'center', gap: '4px',
               background: 'rgba(255,255,255,0.04)', border: '1px solid #1E2D45',
               color: '#8B9BB4', borderRadius: '8px', padding: '4px 10px', fontSize: '12px', cursor: 'pointer',
             }}>
-              View Details {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
+              Details {expanded ? <ChevronUp size={11} /> : <ChevronDown size={11} />}
             </button>
             <button onClick={onNote} style={{
               display: 'flex', alignItems: 'center', gap: '4px',
@@ -211,14 +460,12 @@ function SessionCard({ session, expanded, onToggle, onNote, hasNote }: {
   )
 }
 
-// ─── Real session card (real users) ───────────────────────────
+// ─── Real session card ────────────────────────────────────────
 
-function RealSessionCard({ session }: { session: RealSession }) {
+function RealSessionCard({ session, onViewChat }: { session: RealSession; onViewChat: () => void }) {
   const typeStyle = TYPE_COLORS[session.type] ?? TYPE_COLORS.chat
   const clientName = session.client_name || 'Client'
-  const net = session.duration_minutes && session.price_per_minute
-    ? +((session.duration_minutes * session.price_per_minute) * 0.7).toFixed(2)
-    : 0
+  const net = session.total_cost != null ? +(session.total_cost * 0.7).toFixed(2) : 0
   const isCompleted = session.status === 'completed'
 
   return (
@@ -265,6 +512,20 @@ function RealSessionCard({ session }: { session: RealSession }) {
           }}>
             {isCompleted ? 'Completed' : 'Cancelled'}
           </span>
+          <button
+            onClick={onViewChat}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '5px',
+              background: session.type === 'chat' ? 'rgba(45,212,191,0.08)' : 'rgba(255,255,255,0.04)',
+              border: `1px solid ${session.type === 'chat' ? 'rgba(45,212,191,0.3)' : '#1E2D45'}`,
+              color: session.type === 'chat' ? '#2DD4BF' : '#8B9BB4',
+              borderRadius: '8px', padding: '5px 12px', fontSize: '12px',
+              cursor: 'pointer', fontWeight: 500,
+            }}
+          >
+            {session.type === 'chat' ? <MessageCircle size={11} /> : session.type === 'audio' ? <Mic size={11} /> : <Video size={11} />}
+            {session.type === 'chat' ? 'View Chat' : 'View Details'}
+          </button>
         </div>
       </div>
     </div>
@@ -290,6 +551,12 @@ export default function AdvisorSessions() {
     1001: SESSIONS.find(s => s.id === 1001)?.notes ?? '',
   })
   const [toast, setToast] = useState({ msg: '', visible: false })
+
+  // Chat drawer state
+  const [drawerSession, setDrawerSession] = useState<{
+    sessionId: number; sessionType: string; clientName: string;
+    startedAt: string; durationMinutes: number | null; totalCost: number | null;
+  } | null>(null)
 
   useEffect(() => {
     if (!isRealUser || !user) return
@@ -351,9 +618,28 @@ export default function AdvisorSessions() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {realSessions.map(s => (
-              <RealSessionCard key={s.id} session={s} />
+              <RealSessionCard
+                key={s.id}
+                session={s}
+                onViewChat={() => setDrawerSession({
+                  sessionId: s.id,
+                  sessionType: s.type,
+                  clientName: s.client_name || 'Client',
+                  startedAt: s.started_at,
+                  durationMinutes: s.duration_minutes,
+                  totalCost: s.total_cost,
+                })}
+              />
             ))}
           </div>
+        )}
+
+        {drawerSession && (
+          <ChatDrawer
+            {...drawerSession}
+            advisorUserId={user?.id ?? ''}
+            onClose={() => setDrawerSession(null)}
+          />
         )}
 
         <Toast message={toast.msg} visible={toast.visible} />
@@ -433,6 +719,14 @@ export default function AdvisorSessions() {
               onToggle={() => setExpandedId(expandedId === session.id ? null : session.id)}
               onNote={() => setNoteModal(session)}
               hasNote={!!notes[session.id]}
+              onViewChat={() => setDrawerSession({
+                sessionId: session.id,
+                sessionType: session.type,
+                clientName: session.clientName,
+                startedAt: session.startedAt,
+                durationMinutes: session.durationMinutes,
+                totalCost: session.totalCost,
+              })}
             />
           ))}
         </div>
@@ -461,6 +755,14 @@ export default function AdvisorSessions() {
             showToast('Note saved ✨')
           }}
           onClose={() => setNoteModal(null)}
+        />
+      )}
+
+      {drawerSession && (
+        <ChatDrawer
+          {...drawerSession}
+          advisorUserId=""
+          onClose={() => setDrawerSession(null)}
         />
       )}
 
